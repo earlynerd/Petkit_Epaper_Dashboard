@@ -6,10 +6,10 @@
 #include <Fonts/FreeSansBold12pt7b.h>
 
 // Define plot margins for labels and axes
-const int MARGIN_TOP = 35;
+const int MARGIN_TOP = 30;
 const int MARGIN_BOTTOM = 25;
 const int MARGIN_LEFT = 35;
-const int MARGIN_RIGHT = 35;
+const int MARGIN_RIGHT = 20;
 
 // Define colors (0=black, 15=white for this library)
 const int PLOT_BLACK = 0;
@@ -19,14 +19,9 @@ const int PLOT_WHITE = 15;
 ScatterPlot::ScatterPlot(GxEPD2_DISPLAY_CLASS<GxEPD2_DRIVER_CLASS, MAX_HEIGHT(GxEPD2_DRIVER_CLASS)> *disp, int x, int y, int width, int height)
     : display(disp), _x(x), _y(y), _width(width), _height(height) {}
 
-void ScatterPlot::setDataSeries1(const std::vector<DataPoint> &data)
-{
-    _series1Data = data;
-}
 
-void ScatterPlot::setDataSeries2(const std::vector<DataPoint> &data)
-{
-    _series2Data = data;
+void ScatterPlot::addSeries(const String& name, const std::vector<DataPoint>& data, uint16_t color) {
+    _series.push_back({name, data, color});
 }
 
 void ScatterPlot::setLabels(const String &title, const String &xLabel, const String &yLabel)
@@ -36,12 +31,6 @@ void ScatterPlot::setLabels(const String &title, const String &xLabel, const Str
     _yLabel = yLabel;
 }
 
-void ScatterPlot::setLegend(const String &series1Name, const String &series2Name)
-{
-    _series1Name = series1Name;
-    _series2Name = series2Name;
-}
-
 void ScatterPlot::draw()
 {
     // 1. Find min and max values for auto-scaling
@@ -49,7 +38,7 @@ void ScatterPlot::draw()
     display->setFont(NULL);
     display->setTextColor(EPD_BLACK);
 
-    if (_series1Data.empty() && _series2Data.empty())
+    if (_series.empty())
     {
         drawAxes(0, 10, 0, 10);
         drawLegend();
@@ -61,19 +50,17 @@ void ScatterPlot::draw()
     {
         for (const auto &p : data)
         {
-            if (p.x < xMin)
-                xMin = p.x;
-            if (p.x > xMax)
-                xMax = p.x;
-            if (p.y < yMin)
-                yMin = p.y;
-            if (p.y > yMax)
-                yMax = p.y;
+            if (p.x < xMin) xMin = p.x;
+            if (p.x > xMax) xMax = p.x;
+            if (p.y < yMin) yMin = p.y;
+            if (p.y > yMax) yMax = p.y;
         }
     };
-    //yMin = 0;
-    findMinMax(_series1Data);
-    findMinMax(_series2Data);
+    
+    // Iterate over all series to find global min/max
+    for (const auto& s : _series) {
+        findMinMax(s.data);
+    }
 
     // Add a 5% padding to the ranges
     float xRange = xMax - xMin;
@@ -83,21 +70,12 @@ void ScatterPlot::draw()
     yMin -= yRange * 0.05;
     yMax += yRange * 0.05;
 
-    if (xMax == xMin)
-    {
-        xMax += 1.0;
-        xMin -= 1.0;
-    }
-    if (yMax == yMin)
-    {
-        yMax += 1.0;
-        yMin -= 1.0;
-    }
+    if (xMax == xMin) { xMax += 1.0; xMin -= 1.0; }
+    if (yMax == yMin) { yMax += 1.0; yMin -= 1.0; }
 
     // 2. Clear the plot area (fill with white)
-    //display->clearScreen();
     display->fillRect(_x, _y, _width, _height, GxEPD_WHITE);
-    //yMin = 0;
+    
     // 3. Draw components
     drawAxes(xMin, xMax, yMin, yMax);
     plotDataPoints(xMin, xMax, yMin, yMax);
@@ -120,7 +98,8 @@ void ScatterPlot::drawAxes(float xMin, float xMax, float yMin, float yMax)
     for (int i = 0; i <= numYTicks; ++i)
     {
         int yPos = plotAreaY + (plotAreaHeight * i) / numYTicks;
-        display->drawLine(plotAreaX - 5, yPos, plotAreaX, yPos, EPD_BLACK); // Tick mark
+        if (i == numYTicks) display->drawLine(plotAreaX - 5, plotAreaY + plotAreaHeight-1, plotAreaX, plotAreaY + plotAreaHeight-1, EPD_BLACK);
+        else display->drawLine(plotAreaX - 5, yPos, plotAreaX, yPos, EPD_BLACK); // Tick mark
         if (i < numYTicks)
             drawDashedLine(plotAreaX, yPos, plotAreaX + plotAreaWidth, yPos, EPD_BLACK, 1, 2); // grid line
         float labelVal = yMax - (yMax - yMin) * i / numYTicks;
@@ -131,9 +110,8 @@ void ScatterPlot::drawAxes(float xMin, float xMax, float yMin, float yMax)
         display->setFont(NULL);
         display->setTextSize(1);
         display->getTextBounds(buffer, x, y, &x1, &y1, &w, &h);
-        display->setTextColor(EPD_BLACK);
-        display->setCursor(plotAreaX - w - 8, yPos);
-        display->setTextColor(EPD_BLUE);
+        display->setTextColor(EPD_BLACK); // Original code used blue for Y-axis labels
+        display->setCursor(plotAreaX - w - 8, yPos - h/2); // Centered text
         display->print(buffer);
     }
 
@@ -142,7 +120,8 @@ void ScatterPlot::drawAxes(float xMin, float xMax, float yMin, float yMax)
     for (int i = 0; i <= numXTicks; ++i)
     {
         int xPos = plotAreaX + (plotAreaWidth * i) / numXTicks;
-        display->drawLine(xPos, plotAreaY + plotAreaHeight, xPos, plotAreaY + plotAreaHeight + 5, EPD_BLACK);
+        if(i == numXTicks) display->drawLine(plotAreaX+plotAreaWidth -1 , plotAreaY + plotAreaHeight, plotAreaX+plotAreaWidth -1, plotAreaY + plotAreaHeight + 5, EPD_BLACK);
+        else display->drawLine(xPos, plotAreaY + plotAreaHeight, xPos, plotAreaY + plotAreaHeight + 5, EPD_BLACK);
         if (i < numXTicks)
             drawDashedLine(xPos, plotAreaY, xPos, plotAreaY + plotAreaHeight, EPD_BLACK, 1, 2);
         float labelVal = xMin + (xMax - xMin) * i / numXTicks;
@@ -158,7 +137,7 @@ void ScatterPlot::drawAxes(float xMin, float xMax, float yMin, float yMax)
         display->setTextSize(1);
         display->getTextBounds(buffer, x, y, &x1, &y1, &w, &h);
         display->setTextColor(EPD_BLACK);
-        display->setCursor(xPos - w + 16, plotAreaY + plotAreaHeight + h + 7);
+        display->setCursor(xPos - w/2, plotAreaY + plotAreaHeight + 7); // Centered text
         display->print(buffer);
     }
 
@@ -168,16 +147,13 @@ void ScatterPlot::drawAxes(float xMin, float xMax, float yMin, float yMax)
     display->setFont(&FreeSansBold12pt7b);
     display->getTextBounds(_title.c_str(), x, y, &x1, &y1, &w, &h);
     display->setTextColor(EPD_BLACK);
-    display->setCursor(_x + _width / 2 - w / 2 - 20, MARGIN_TOP / 2 + h / 2);
+    display->setCursor(_x + (_width - w) / 2, MARGIN_TOP - h/2); // Centered title
     display->print(_title);
-    //display->setCursor(_x + _width / 2 - _xLabel.length() * 3, _y + _height - 15);
-    //display->print(_xLabel);
+    
     display->setTextColor(EPD_BLACK);
     display->setFont(NULL);
-    //display->setRotation(3);
-    //display->setCursor(_x + (_height / 2) - (w / 2), _y + h + 3);
-    //display->print(_yLabel);
-    //display->setRotation(0);
+    // Y-Axis label (rotated text is hard, skipping for brevity, was missing in original)
+    // X-Axis label (was missing in original)
 }
 
 void ScatterPlot::plotDataPoints(float xMin, float xMax, float yMin, float yMax)
@@ -193,72 +169,68 @@ void ScatterPlot::plotDataPoints(float xMin, float xMax, float yMin, float yMax)
         screenY = (plotAreaY + plotAreaHeight) - ((p.y - yMin) / (yMax - yMin)) * plotAreaHeight;
     };
 
-    for (const auto &p : _series1Data)
-    {
-        int sx, sy;
-        mapPoint(p, sx, sy);
-        drawMarker1(sx, sy);
+    // Loop over all series and plot their points
+    for (const auto& s : _series) {
+        for (const auto &p : s.data)
+        {
+            int sx, sy;
+            mapPoint(p, sx, sy);
+            drawMarker(sx, sy, s.color);
+        }
     }
+}
 
-    for (const auto &p : _series2Data)
-    {
-        int sx, sy;
-        mapPoint(p, sx, sy);
-        drawMarker2(sx, sy);
-    }
-}
-/*
-void ScatterPlot::drawLegend()
-{
-    int16_t x = _x, y = _y, x1 = 0, y1 = 0;
-    uint16_t series1width, series1height, series2width, series2height;
-    display->setTextSize(1);
-    display->setFont(NULL);
-    display->setTextColor(EPD_BLACK);
-    display->getTextBounds(_series1Name.c_str(), x, y, &x1, &y1, &series1width, &series1height);
-    display->getTextBounds(_series2Name.c_str(), x, y, &x1, &y1, &series2width, &series2height);
-    int32_t widest = (series1width > series2width) ? series1width : series2width;
-    int legendX = _x + _width - widest - 5 - MARGIN_RIGHT - 3;
-    int legendY = _y + MARGIN_TOP + _height / 2 - (series1height + series2height + 16 + 10)/2;
-    display->fillRect(legendX - 8, legendY - series1height - 8, widest + 16 + 15, series1height + series2height + 16 + 10, EPD_WHITE);
-    display->drawRect(legendX - 8, legendY - series1height - 8, widest + 16 + 15, series1height + series2height + 16 + 10, EPD_BLACK);
-    drawMarker1(legendX, legendY - series1height / 2);
-    display->setCursor(legendX + 15, legendY);
-    display->print(_series1Name);
-    drawMarker2(legendX, legendY + series1height + 10 - series2height / 2);
-    display->setCursor(legendX + 15, legendY + series1height + 10);
-    display->print(_series2Name);
-}
-*/
 void ScatterPlot::drawLegend() {
     int markerw = 15, markerh = 10;
-    int16_t legendX = _x +MARGIN_LEFT ;
-    int16_t legendY = _y + MARGIN_TOP/2 - markerh/2;
+    int16_t legendX = _x + MARGIN_LEFT;
+    int16_t legendY = _y + MARGIN_TOP/2 - markerh/2; // Top-left legend
+    int16_t spacing = 10;
+
     display->setFont(&FreeSans9pt7b);
     display->setTextSize(0);
     int16_t  x1 = 0, y1 = 0;
     uint16_t w = 0, h = 0;
-    // Series 1
-    display->getTextBounds(_series1Name, legendX, legendY, &x1, &y1, &w, &h);
-    display->fillRect(legendX, legendY, markerw, markerh, EPD_RED);
-    display->setCursor(legendX + markerw +5,  _y + MARGIN_TOP/2 - h/2 + 12);    // minus text heighh
-    display->print(_series1Name);
+    
+    for (const auto& s : _series) {
+        display->getTextBounds(s.name, legendX, legendY, &x1, &y1, &w, &h);
+        drawMarker(legendX + markerw/2, legendY + markerh/2, s.color);
+        //display->fillRect(legendX, legendY, markerw, markerh, s.color);
+        display->setCursor(legendX + markerw + 5,  _y + MARGIN_TOP/2 + h/2);
+        display->print(s.name);
 
-    // Series 2
-    display->fillRect(legendX + markerw + 40 + w, legendY, markerw, markerh, EPD_BLUE);
-    display->setCursor(legendX + 2* markerw + 40 + w + 10, _y + MARGIN_TOP/2 -h/2 + 12);
-    display->print(_series2Name);
+        // Move X for next legend item
+        legendX += markerw + w + spacing + 5;
+    }
 }
 
-void ScatterPlot::drawMarker1(int x, int y)
+void ScatterPlot::drawMarker(int x, int y, uint16_t color)
 {
-    display->fillCircle(x, y, 2, EPD_RED);
-
-}
-
-void ScatterPlot::drawMarker2(int x, int y)
-{
-    display->fillCircle(x, y, 2, EPD_BLUE);
+    #if (EPD_SELECT == 1002)
+        // You could customize this to draw different markers based on series index
+        // For now, all series use a filled circle
+        display->fillCircle(x, y, 2, color);
+        
+    #elif (EPD_SELECT == 1001)
+        switch(color)
+        {
+            case EPD_RED:
+                display->fillCircle(x, y, 2, EPD_BLACK);
+            break;
+            case EPD_BLUE:
+                display->drawCircle(x, y, 2, EPD_BLACK);
+            break;
+            case EPD_GREEN:
+                display->drawRect(x-1, y+1, 4, 4, EPD_BLACK);
+            break;
+            case EPD_YELLOW:
+                display->fillRect(x-1, y+1, 4, 4, EPD_BLACK);
+            break;
+            case EPD_BLACK:
+                display->drawLine(x-2, y+2, x+2, y-2, EPD_BLACK);
+                display->drawLine(x+1, y-1, x-1, y+1, EPD_BLACK);
+            break;
+        }
+    #endif
 }
 
 // Helper function to simplify drawing text
@@ -266,9 +238,9 @@ void ScatterPlot::drawString(int x, int y, const String &text, const GFXfont *fo
 {
     int cursor_x = x;
     int cursor_y = y;
-    display->setFont(NULL);
+    display->setFont(font); // Use the provided font
     display->setTextSize(1);
-    display->setTextColor(EPD_BLACK);
+    display->setTextColor(color); // Use the provided color
     display->setCursor(x, y);
     display->print(text);
 }
@@ -289,10 +261,9 @@ void ScatterPlot::add_refresh_timestamp()
     display->setTextSize(1);
     display->getTextBounds(strftime_buf, x, y, &x1, &y1, &w, &h);
     x = EPD_WIDTH - w - 5;
-    //y = 2;
-    drawString(x, h+1, strftime_buf, &FreeMonoBold9pt7b, EPD_BLACK);
+    
+    drawString(x, h+1, strftime_buf, NULL, EPD_BLACK); // Use NULL font for default
 
-  
     int mv = analogReadMilliVolts(BATTERY_ADC_PIN);
     float battery_voltage = (mv / 1000.0) * 2;
 
@@ -303,7 +274,7 @@ void ScatterPlot::add_refresh_timestamp()
     char buffer[32];
     sprintf(buffer, "Battery: %.2fV", battery_voltage);
     display->getTextBounds(buffer, x, y, &x1, &y1, &w, &h);
-    drawString(x , 2*h + 4, buffer, &FreeMonoBold9pt7b, EPD_BLACK);
+    drawString(EPD_WIDTH - w - 5 , 2*h + 4, buffer, NULL, EPD_BLACK); // Use NULL font
 }
 
 void ScatterPlot::drawDashedLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1, uint16_t color, uint16_t dashLength, uint16_t spaceLength)

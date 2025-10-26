@@ -1,8 +1,12 @@
 #include <Arduino.h>
 #include <WiFi.h>
-#include "PetKitApi.h"
 #include "config.h"
+#include "PetKitApi.h"
+#if (EPD_SELECT == 1002)
 #include <GxEPD2_7C.h>
+#elif (EPD_SELECT == 1001)
+#include <GxEPD2_BW.h>
+#endif
 #include "RTClib.h"
 #include <Fonts/FreeSans9pt7b.h>
 #include <Wire.h>
@@ -26,6 +30,10 @@ SPIClass hspi(HSPI);
 RTC_PCF8563 rtc;
 ScatterPlot *myPlot;
 Adafruit_SHT4x sht4 = Adafruit_SHT4x();
+
+
+std::vector<uint16_t> petColors = {EPD_RED, EPD_BLUE, EPD_GREEN, EPD_YELLOW, EPD_BLACK};
+
 GxEPD2_DISPLAY_CLASS<GxEPD2_DRIVER_CLASS, MAX_HEIGHT(GxEPD2_DRIVER_CLASS)>
     display(GxEPD2_DRIVER_CLASS(/*CS=*/EPD_CS_PIN, /*DC=*/EPD_DC_PIN,
                                 /*RST=*/EPD_RES_PIN, /*BUSY=*/EPD_BUSY_PIN));
@@ -73,7 +81,6 @@ void button_1_isr()
   preferences.putInt(NVS_PLOT_TYPE_KEY, plotindex);
   Serial.print("Type changed to ");
   Serial.println(thisPlot.name);
- 
 }
 
 void button_2_isr()
@@ -108,6 +115,7 @@ void setup()
   pinMode(BATTERY_ENABLE_PIN, OUTPUT);
   digitalWrite(BATTERY_ENABLE_PIN, HIGH); // Enable battery monitoring
   preferences.begin(NVS_NAMESPACE);
+
 
   String petkitUser = preferences.getString(NVS_PETKIT_USER_KEY, "");
   String petkitPass = preferences.getString(NVS_PETKIT_PASS_KEY, "");
@@ -200,6 +208,11 @@ void setup()
       // --- Get Pet Information ---
       const auto &pets = petkit->getPets();
       Serial.printf("\nFound %zu pets:\n", pets.size());
+      if (pets.empty()) {
+        Serial.println("No pets found on this account. Exiting.");
+        // TODO: Display error on e-paper
+        return;
+      }
       for (const auto &pet : pets)
       {
         Serial.printf(" - Pet ID: %d, Name: %s\n", pet.id, pet.name.c_str());
@@ -220,12 +233,13 @@ void setup()
         Serial.println("---------------------");
       }
 
-      //create plot data vectors
-      std::vector<LitterboxRecord> pet_records[pets.size()];
-      std::vector<DataPoint> pet_scatterplot[pets.size()];
-      std::vector<float> weight_hist[pets.size()];
-      std::vector<float> interval_hist[pets.size()];
-      std::vector<float> duration_hist[pets.size()];
+      // --- Create plot data vectors dynamically based on number of pets ---
+      size_t numPets = pets.size();
+      std::vector<LitterboxRecord> pet_records[numPets];
+      std::vector<DataPoint> pet_scatterplot[numPets];
+      std::vector<float> weight_hist[numPets];
+      std::vector<float> interval_hist[numPets];
+      std::vector<float> duration_hist[numPets];
 
       Serial.println("\n--- Historical Records by Pet ---");
       int idx = 0;
@@ -239,6 +253,7 @@ void setup()
         if (pet_records[idx].empty())
         {
           Serial.println("No records found for this pet in the last 30 days.");
+          idx++; // Don't forget to increment index even if no records
           continue;
         }
         time_t lastTimestamp = -1;
@@ -264,82 +279,109 @@ void setup()
         lastTimestamp = -1.0;
       }
       
+      // --- START REFACTORED PLOTTING BLOCK ---
       switch (thisPlot.type)
       {
       case Scatterplot_Weight:
       {
-        myPlot = new ScatterPlot(&display, 0, 0, EPD_WIDTH, EPD_HEIGHT); // TODO: deal with variable numbers of pets. add possibility for more dataseries and markers
+        myPlot = new ScatterPlot(&display, 0, 0, EPD_WIDTH, EPD_HEIGHT);
         myPlot->setLabels("Weight (lb)", "Date", "Weight(lb)");
-        myPlot->setLegend(pets[0].name.c_str(), pets[1].name.c_str());
-        myPlot->setDataSeries1(pet_scatterplot[0]);
-        myPlot->setDataSeries2(pet_scatterplot[1]);
+        
+        // Loop and add all pets
+        for (int i = 0; i < numPets; ++i) {
+          myPlot->addSeries(pets[i].name.c_str(), pet_scatterplot[i], petColors[i % petColors.size()]);
+        }
         myPlot->draw();
       }
       break;
       case Histogram_Duration:
       {
-        EpaperHistogram histogram(&display, 0, 0, display.width(), display.height());
-        histogram.setDataLabels(pets[0].name.c_str(), pets[1].name.c_str());
-        histogram.setTitle("Duration (Minutes)");
+        display.fillScreen(GxEPD_WHITE);
+        Histogram histogram(&display, 0, 0, display.width(), display.height());
+        histogram.setTitle("Duration (Minutes) - Normalized");
         histogram.setBinCount(30); 
-        histogram.setData(duration_hist[0], duration_hist[1]);
+        histogram.setNormalization(true); // Enable normalization
+        
+        // Loop and add all pets
+        for (int i = 0; i < numPets; ++i) {
+          histogram.addSeries(pets[i].name.c_str(), duration_hist[i], petColors[i % petColors.size()]);
+        }
         histogram.plot();
-
-
       }
       break;
       case Histogram_Interval:
       {
         display.fillScreen(GxEPD_WHITE);
-        EpaperHistogram histogram(&display, 0, 0, display.width(), display.height());
-        histogram.setDataLabels(pets[0].name.c_str(), pets[1].name.c_str());
-        histogram.setTitle("Interval (Hours))");
-        histogram.setBinCount(40); 
-        histogram.setData(interval_hist[0], interval_hist[1]);
+        Histogram histogram(&display, 0, 0, display.width(), display.height());
+        histogram.setTitle("Interval (Hours) - Normalized");
+        histogram.setBinCount(40);
+        histogram.setNormalization(true); // Enable normalization
+        
+        // Loop and add all pets
+        for (int i = 0; i < numPets; ++i) {
+          histogram.addSeries(pets[i].name.c_str(), interval_hist[i], petColors[i % petColors.size()]);
+        }
         histogram.plot();
       }
       break;
       case Histograms:
       {
         display.fillScreen(GxEPD_WHITE);
-        EpaperHistogram histogram1(&display, 0, 0, display.width(), display.height()/2);
-        histogram1.setDataLabels(pets[0].name.c_str(), pets[1].name.c_str());
-        histogram1.setTitle("Interval (Hours)");
-        histogram1.setBinCount(30); 
-        histogram1.setData(interval_hist[0], interval_hist[1]);
+        Histogram histogram1(&display, 0, 0, display.width(), display.height()/2);
+        histogram1.setTitle("Interval (Hours) - Normalized");
+        histogram1.setBinCount(30);
+        histogram1.setNormalization(true); // Enable normalization
+        
+        // Loop and add all pets to histogram 1
+        for (int i = 0; i < numPets; ++i) {
+          histogram1.addSeries(pets[i].name.c_str(), interval_hist[i], petColors[i % petColors.size()]);
+        }
         histogram1.plot();
 
-        EpaperHistogram histogram2(&display, 0, display.height()/2, display.width(), display.height()/2);
-        histogram2.setDataLabels(pets[0].name.c_str(), pets[1].name.c_str());
-        histogram2.setTitle("Duration (Minutes)");
-        histogram2.setBinCount(30); 
-        histogram2.setData(duration_hist[0], duration_hist[1]);
+        Histogram histogram2(&display, 0, display.height()/2, display.width(), display.height()/2);
+        histogram2.setTitle("Duration (Minutes) - Normalized");
+        histogram2.setBinCount(30);
+        histogram2.setNormalization(true); // Enable normalization
+        
+        // Loop and add all pets to histogram 2
+        for (int i = 0; i < numPets; ++i) {
+          histogram2.addSeries(pets[i].name.c_str(), duration_hist[i], petColors[i % petColors.size()]);
+        }
         histogram2.plot();
-
       }
       break;
       case ComboPlot:
       {
         display.fillScreen(GxEPD_WHITE);
-        EpaperHistogram histogram1(&display, 0, display.height()/2, display.width()/2, display.height()/2);
-        histogram1.setDataLabels(pets[0].name.c_str(), pets[1].name.c_str());
-        histogram1.setTitle("Interval (Hours)");
-        histogram1.setBinCount(20); 
-        histogram1.setData(interval_hist[0], interval_hist[1]);
+        Histogram histogram1(&display, 0, display.height()*2 / 3, display.width()/2, display.height()/3);
+        histogram1.setTitle("Interval (Hours)"); 
+        histogram1.setBinCount(20);
+        histogram1.setNormalization(true); // Enable normalization
+        
+        // Loop and add all pets to histogram 1
+        for (int i = 0; i < numPets; ++i) {
+          histogram1.addSeries(pets[i].name.c_str(), interval_hist[i], petColors[i % petColors.size()]);
+        }
         histogram1.plot();
 
-        EpaperHistogram histogram2(&display, display.width()/2, display.height()/2, display.width()/2, display.height()/2);
-        histogram2.setDataLabels(pets[0].name.c_str(), pets[1].name.c_str());
-        histogram2.setTitle("Duration (Minutes)");
+        Histogram histogram2(&display, display.width()/2, display.height()*2 / 3, display.width()/2, display.height()/3);
+        histogram2.setTitle("Duration (Minutes)"); 
         histogram2.setBinCount(20);
-        histogram2.setData(duration_hist[0], duration_hist[1]);
+        histogram2.setNormalization(true); // Enable normalization
+        
+        // Loop and add all pets to histogram 2
+        for (int i = 0; i < numPets; ++i) {
+          histogram2.addSeries(pets[i].name.c_str(), duration_hist[i], petColors[i % petColors.size()]);
+        }
         histogram2.plot();
 
-        myPlot = new ScatterPlot(&display, 0, 0, EPD_WIDTH, EPD_HEIGHT/2); // TODO: deal with variable numbers of pets. add possibility for more dataseries and markers
+        myPlot = new ScatterPlot(&display, 0, 0, EPD_WIDTH, EPD_HEIGHT*2/3);
         myPlot->setLabels("Weight (lb)", "Date", "Weight(lb)");
-        myPlot->setLegend(pets[0].name.c_str(), pets[1].name.c_str());
-        myPlot->setDataSeries1(pet_scatterplot[0]);
-        myPlot->setDataSeries2(pet_scatterplot[1]);
+        
+        // Loop and add all pets to scatter plot
+        for (int i = 0; i < numPets; ++i) {
+          myPlot->addSeries(pets[i].name.c_str(), pet_scatterplot[i], petColors[i % petColors.size()]);
+        }
         myPlot->draw();
       }
       break;
@@ -347,6 +389,7 @@ void setup()
       default:
       break;
       }
+      // --- END REFACTORED PLOTTING BLOCK ---
      
     }
     else
@@ -394,7 +437,7 @@ bool initializeFromRtc()
   }
 
   DateTime rtcnow = rtc.now();
-  if (rtcnow.year() < 2024)
+  if (rtcnow.year() < 2024) 
   {
     Serial.printf("[WARN] RTC has an invalid time (Year: %d). Waiting for WiFi sync.\n", rtcnow.year());
     return false;
@@ -430,6 +473,7 @@ bool getTimezoneAndSync()
   // --- Retry loop for fetching timezone ---
   for (int i = 0; i < MAX_SYNC_RETRIES; ++i)
   {
+    delay(random(200, 2000));
     Serial.printf("[Time Sync] Fetching timezone, attempt %d/%d...\n", i + 1, MAX_SYNC_RETRIES);
     if (http.begin(client, TIME_API_URL))
     {

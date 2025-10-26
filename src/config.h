@@ -46,12 +46,12 @@ const int BUTTON_KEY2 = 5;   // KEY2 - GPIO5
 // Select the ePaper driver to use
 // 0: reTerminal E1001 (7.5'' B&W)
 // 1: reTerminal E1002 (7.3'' Color)
-#define EPD_SELECT 1
+#define EPD_SELECT 1002
 
-#if (EPD_SELECT == 0)
+#if (EPD_SELECT == 1001)
 #define GxEPD2_DISPLAY_CLASS GxEPD2_BW
 #define GxEPD2_DRIVER_CLASS GxEPD2_750_GDEY075T7 // 7.5'' B&W driver
-#elif (EPD_SELECT == 1)
+#elif (EPD_SELECT == 1002)
 #define GxEPD2_DISPLAY_CLASS GxEPD2_7C
 #define GxEPD2_DRIVER_CLASS GxEPD2_730c_GDEP073E01 // 7.3'' Color driver
 #endif
@@ -77,7 +77,7 @@ const int BUTTON_KEY2 = 5;   // KEY2 - GPIO5
 #define WIFI_TIMEOUT 20000
 
 #define TIME_API_URL    "https://worldtimeapi.org/api/ip"
-#define MAX_SYNC_RETRIES  25
+#define MAX_SYNC_RETRIES  10
 
 #define NTP_SERVER_1    "pool.ntp.org"
 #define NTP_SERVER_2    "time.nist.gov"
@@ -85,7 +85,6 @@ const int BUTTON_KEY2 = 5;   // KEY2 - GPIO5
 #define EPD_BLACK     0x0000
 #define EPD_BLUE      0x001F 
 #define EPD_GREEN     0x07E0 
-#define EPD_ORANGE    0xFC00 
 #define EPD_RED       0xF800 
 #define EPD_YELLOW    0xFFE0 
 #define EPD_WHITE     0xFFFF
