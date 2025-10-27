@@ -22,24 +22,27 @@
 #include "Adafruit_SHT4x.h"
 #include <TzDbLookup.h>
 #include "WiFiProvisioner.h"
-
+#include "provisionerConfig.h"
 
 Preferences preferences;
-PetKitApi* petkit;
+PetKitApi *petkit;
 SPIClass hspi(HSPI);
 RTC_PCF8563 rtc;
 ScatterPlot *myPlot;
 Adafruit_SHT4x sht4 = Adafruit_SHT4x();
 
 
-std::vector<uint16_t> petColors = {EPD_RED, EPD_BLUE, EPD_GREEN, EPD_YELLOW, EPD_BLACK};
+String petkitUser;
+String petkitPass;
+String petkitRegion;
+String petkitTZ;
 
+std::vector<uint16_t> petColors = {EPD_RED, EPD_BLUE, EPD_GREEN, EPD_YELLOW, EPD_BLACK};
 GxEPD2_DISPLAY_CLASS<GxEPD2_DRIVER_CLASS, MAX_HEIGHT(GxEPD2_DRIVER_CLASS)>
     display(GxEPD2_DRIVER_CLASS(/*CS=*/EPD_CS_PIN, /*DC=*/EPD_DC_PIN,
                                 /*RST=*/EPD_RES_PIN, /*BUSY=*/EPD_BUSY_PIN));
-
+StatusRecord latest_status;
 char time_zone[64];
-
 
 enum PlotType
 {
@@ -57,13 +60,13 @@ struct PlotInfo
   char name[64];
 };
 
-struct PlotInfo plotinfo[] = 
-{
-  {PlotType::Scatterplot_Weight, "Weight Scatterplot"},
-  {PlotType::Histogram_Interval, "Interval Histogram"},
-  {PlotType::Histogram_Duration, "Duration histogram"},
-  {PlotType::Histograms, "Double Histogram"},
-  {PlotType::ComboPlot, "Triple Plot"},
+struct PlotInfo plotinfo[] =
+    {
+        {PlotType::Scatterplot_Weight, "Weight Scatterplot"},
+        {PlotType::Histogram_Interval, "Interval Histogram"},
+        {PlotType::Histogram_Duration, "Duration histogram"},
+        {PlotType::Histograms, "Double Histogram"},
+        {PlotType::ComboPlot, "Triple Plot"},
 };
 
 PlotInfo thisPlot = plotinfo[0];
@@ -75,8 +78,10 @@ bool initializeFromRtc();
 void button_1_isr()
 {
   plotindex++;
-  if(plotindex < 0 )plotindex = PlotType::Plot_Type_Max-1;
-  if(plotindex >= (int)PlotType::Plot_Type_Max) plotindex = 0;
+  if (plotindex < 0)
+    plotindex = PlotType::Plot_Type_Max - 1;
+  if (plotindex >= (int)PlotType::Plot_Type_Max)
+    plotindex = 0;
   thisPlot = plotinfo[plotindex];
   preferences.putInt(NVS_PLOT_TYPE_KEY, plotindex);
   Serial.print("Type changed to ");
@@ -86,8 +91,11 @@ void button_1_isr()
 void button_2_isr()
 {
   plotindex--;
-  if(plotindex < 0 )plotindex = PlotType::Plot_Type_Max;;
-  if(plotindex > (int)PlotType::Plot_Type_Max) plotindex = 0;
+  if (plotindex < 0)
+    plotindex = PlotType::Plot_Type_Max;
+  ;
+  if (plotindex > (int)PlotType::Plot_Type_Max)
+    plotindex = 0;
   thisPlot = plotinfo[plotindex];
   preferences.putInt(NVS_PLOT_TYPE_KEY, plotindex);
   Serial.print("Type changed to ");
@@ -109,24 +117,46 @@ void setup()
   pinMode(BUTTON_KEY0, INPUT);
   pinMode(BUTTON_KEY1, INPUT);
   pinMode(BUTTON_KEY2, INPUT);
+
+  preferences.begin(NVS_NAMESPACE);
+
+  if (!digitalRead(BUTTON_KEY1) && !digitalRead(BUTTON_KEY2)) // both keys pressed at powerup
+  {
+    uint32_t startPress = millis();
+    while (!digitalRead(BUTTON_KEY1) && !digitalRead(BUTTON_KEY2) && (millis() - startPress < 3000))
+    {
+      digitalWrite(LED_PIN, HIGH);
+      delay(100);
+      digitalWrite(LED_PIN, LOW);
+      delay(100);
+    }
+    digitalWrite(LED_PIN, HIGH);
+    delay(1000);
+    if (!digitalRead(BUTTON_KEY1) && !digitalRead(BUTTON_KEY2))
+    {
+      Serial.println("Wifi and account details cleared");
+      preferences.clear();
+      preferences.putString(NVS_PETKIT_REGION_KEY, "us");
+      preferences.end();
+      WiFi.disconnect(true, true);
+      ESP.restart();
+    }
+    else
+    {
+      digitalWrite(LED_PIN, LOW);
+    }
+  }
   attachInterrupt(BUTTON_KEY1, button_1_isr, FALLING);
   attachInterrupt(BUTTON_KEY2, button_2_isr, FALLING);
 
   pinMode(BATTERY_ENABLE_PIN, OUTPUT);
   digitalWrite(BATTERY_ENABLE_PIN, HIGH); // Enable battery monitoring
-  preferences.begin(NVS_NAMESPACE);
 
-
-  String petkitUser = preferences.getString(NVS_PETKIT_USER_KEY, "");
-  String petkitPass = preferences.getString(NVS_PETKIT_PASS_KEY, "");
-  String petkitRegion = preferences.getString(NVS_PETKIT_REGION_KEY, "");
-  String petkitTZ = preferences.getString(NVS_PETKIT_TIMEZONE_KEY, "");
-
- 
-
-  plotindex= preferences.getInt(NVS_PLOT_TYPE_KEY, 0);
-  if(plotindex < 0 )plotindex = 0;
-  if(plotindex >= (int)PlotType::Plot_Type_Max) plotindex = (int)PlotType::Plot_Type_Max-1;
+  plotindex = preferences.getInt(NVS_PLOT_TYPE_KEY, 0);
+  if (plotindex < 0)
+    plotindex = 0;
+  if (plotindex >= (int)PlotType::Plot_Type_Max)
+    plotindex = (int)PlotType::Plot_Type_Max - 1;
   thisPlot = plotinfo[plotindex];
   preferences.putInt(NVS_PLOT_TYPE_KEY, plotindex);
 
@@ -146,15 +176,20 @@ void setup()
   // Initialize display
   display.init(0);
 
-  if (digitalRead(SD_DET_PIN) == HIGH) {
+  if (digitalRead(SD_DET_PIN))
+  {
     Serial.println("No SD card detected. Please insert a card.");
   }
-
-  Serial.println("SD card detected, attempting to mount...");
-  if (!SD.begin(SD_CS_PIN, hspi)) {
-    Serial.println("SD Card Mount Failed!");
+  else
+  {
+    Serial.println("SD card detected, attempting to mount...");
+    if (!SD.begin(SD_CS_PIN, hspi))
+    {
+      Serial.println("SD Card Mount Failed!");
+    }
+    else
+      Serial.println("SD Card Mounted.");
   }
-  else Serial.println("SD Card Mounted.");
 
   Wire.setPins(I2C_SDA, I2C_SCL);
   if (!sht4.begin())
@@ -163,9 +198,60 @@ void setup()
   }
 
   initializeFromRtc();
+  WiFiProvisioner provisioner(provisionerCustom);
+  // Set up callbacks
+  provisioner.onProvision([]()
+                          { Serial.println("Provisioning started."); })
 
+      .onSuccess([](const char *ssid, const char *password, const char *input, const char *pkuser, const char *pkpass)
+                 {
+                   Serial.printf("Connected to SSID: %s\n", ssid);
+                   preferences.putString(NVS_SSID_KEY, ssid);
+                   if (password)
+                   {
+                     Serial.printf("Wifi Password: %s\n", password);
+                     preferences.putString(NVS_WIFI_PASS_KEY, password);
+                   }
+                   if (pkuser)
+                   {
+                     Serial.printf("Petkit Username: %s\n", pkuser);
+                     preferences.putString(NVS_PETKIT_USER_KEY, pkuser);
+                   }
+                   if (pkpass)
+                   {
+                     Serial.printf("Petkit Password: %s\n", pkpass);
+                     preferences.putString(NVS_PETKIT_PASS_KEY, pkpass);
+                   }
+                   Serial.println("Provisioning completed successfully! Restarting.");
+                   preferences.end();
+                 })
+      .onFactoryReset([]()
+                      {
+        Serial.println("Factory reset triggered! Clearing preferences...");
+        preferences.clear(); // Clear all stored credentials and API key
+       preferences.end();
+       WiFi.disconnect(true, true);
+       ESP.restart(); });
 
-  WiFi.begin();
+  String WifiSSID = preferences.getString(NVS_SSID_KEY, "");
+  if (WifiSSID.length() > 0)
+  {
+    Serial.print("Recalled Wifi SSID from NVS: ");
+    Serial.println(WifiSSID);
+  }
+  else
+    Serial.println("No Wifi SSID found in NVS");
+  String WifiPass = preferences.getString(NVS_WIFI_PASS_KEY, "");
+  if (WifiPass.length() > 0)
+  {
+    Serial.print("Recalled Wifi Password from NVS: ");
+    Serial.println(WifiPass);
+  }
+  else
+    Serial.println("No Wifi Password found in NVS");
+ 
+
+  WiFi.begin(WifiSSID, WifiPass);
   Serial.print("Connecting to WiFi");
   digitalWrite(LED_PIN, HIGH);
   uint32_t startWifiTime = millis();
@@ -174,28 +260,70 @@ void setup()
     delay(500);
     Serial.print(".");
   }
-  if(WiFi.status() == WL_CONNECTED)
+  if (WiFi.status() == WL_CONNECTED)
   {
     Serial.println(" Connected!");
   }
-  else{
+  else
+  {
     Serial.println(" Timed Out. Starting provisioning service.");
-    //update epaper with message
-    //PROVISIONING
+    // update epaper with message
+    provisioner.startProvisioning();
+    preferences.end();
+    WiFi.disconnect();
+    ESP.restart();
   }
   digitalWrite(LED_PIN, LOW);
 
   getTimezoneAndSync();
-  
-  if((petkitUser.length() > 0) && (petkitPass.length() > 0) && (petkitRegion.length() > 0) && (petkitTZ.length() > 0))
+
+  petkitUser = preferences.getString(NVS_PETKIT_USER_KEY, "");
+  if (petkitUser.length() > 0)
   {
-    petkit = new PetKitApi(petkitUser.c_str(),petkitPass.c_str(),  petkitRegion.c_str(), petkitTZ.c_str(), LED_PIN);
+    Serial.print("Recalled Petkit Username from NVS: ");
+    Serial.println(petkitUser);
+  }
+  else
+    Serial.println("No Petkit Username found in NVS");
+  petkitPass = preferences.getString(NVS_PETKIT_PASS_KEY, "");
+  if (petkitPass.length() > 0)
+  {
+    Serial.println("Recalled Petkit Password from NVS.");
+  }
+  else
+    Serial.println("No Petkit Password found in NVS");
+  petkitRegion = preferences.getString(NVS_PETKIT_REGION_KEY, "");
+  petkitTZ = preferences.getString(NVS_PETKIT_TIMEZONE_KEY, "");
+  if (petkitTZ.length() > 0)
+  {
+    Serial.print("Recalled Petkit Timezone from NVS: ");
+    Serial.println(petkitTZ);
+  }
+  else
+    Serial.println("No Petkit Timezone found in NVS");
+
+  if ((petkitUser.length() > 0) && (petkitPass.length() > 0) && (petkitRegion.length() > 0) && (petkitTZ.length() > 0))
+  {
+
+    petkit = new PetKitApi(petkitUser.c_str(), petkitPass.c_str(), petkitRegion.c_str(), petkitTZ.c_str(), LED_PIN);
   }
   else
   {
-    Serial.println("No credentials found in NVS, please use provisioning portal to load WiFi and Login Details.");
-    //update epaper with message
-    //PROVISIONING
+    if (petkitUser.length() == 0)
+      Serial.println("petkit username not found.");
+    if (petkitPass.length() == 0)
+      Serial.println("petkit password not found.");
+    if (petkitRegion.length() == 0)
+      Serial.println("petkit region code not found.");
+    if (petkitTZ.length() == 0)
+      Serial.println("petkit timezone not found.");
+    Serial.println("please use provisioning portal to load WiFi and Login Details.");
+    // update epaper with message
+    //  Start provisioning
+    provisioner.startProvisioning();
+    preferences.end();
+    WiFi.disconnect();
+    ESP.restart();
   }
 
   if (petkit->login())
@@ -204,11 +332,12 @@ void setup()
 
     // fetchAllData() gets devices, pets, and historical records in one call
     if (petkit->fetchAllData(30))
-    { 
+    {
       // --- Get Pet Information ---
       const auto &pets = petkit->getPets();
       Serial.printf("\nFound %zu pets:\n", pets.size());
-      if (pets.empty()) {
+      if (pets.empty())
+      {
         Serial.println("No pets found on this account. Exiting.");
         // TODO: Display error on e-paper
         return;
@@ -218,7 +347,7 @@ void setup()
         Serial.printf(" - Pet ID: %d, Name: %s\n", pet.id, pet.name.c_str());
       }
       // --- Get Latest Litterbox Status ---
-      StatusRecord latest_status = petkit->getLatestStatus();
+      latest_status = petkit->getLatestStatus();
       if (latest_status.device_name != "")
       {
         char timeStr[32];
@@ -270,15 +399,15 @@ void setup()
                         record.duration_seconds);
           pet_scatterplot[idx].push_back({(float)record.timestamp, ((float)record.weight_grams / (float)GRAMS_PER_POUND)});
           weight_hist[idx].push_back((float)record.weight_grams / (float)GRAMS_PER_POUND);
-          duration_hist[idx].push_back((float)record.duration_seconds/60.0);
+          duration_hist[idx].push_back((float)record.duration_seconds / 60.0);
           if (lastTimestamp > 0)
-          interval_hist[idx].push_back(((float)(lastTimestamp - record.timestamp))/3600.0);
+            interval_hist[idx].push_back(((float)(lastTimestamp - record.timestamp)) / 3600.0);
           lastTimestamp = record.timestamp;
         }
         idx++;
         lastTimestamp = -1.0;
       }
-      
+
       // --- START REFACTORED PLOTTING BLOCK ---
       switch (thisPlot.type)
       {
@@ -286,9 +415,10 @@ void setup()
       {
         myPlot = new ScatterPlot(&display, 0, 0, EPD_WIDTH, EPD_HEIGHT);
         myPlot->setLabels("Weight (lb)", "Date", "Weight(lb)");
-        
+
         // Loop and add all pets
-        for (int i = 0; i < numPets; ++i) {
+        for (int i = 0; i < numPets; ++i)
+        {
           myPlot->addSeries(pets[i].name.c_str(), pet_scatterplot[i], petColors[i % petColors.size()]);
         }
         myPlot->draw();
@@ -299,11 +429,12 @@ void setup()
         display.fillScreen(GxEPD_WHITE);
         Histogram histogram(&display, 0, 0, display.width(), display.height());
         histogram.setTitle("Duration (Minutes) - Normalized");
-        histogram.setBinCount(30); 
+        histogram.setBinCount(30);
         histogram.setNormalization(true); // Enable normalization
-        
+
         // Loop and add all pets
-        for (int i = 0; i < numPets; ++i) {
+        for (int i = 0; i < numPets; ++i)
+        {
           histogram.addSeries(pets[i].name.c_str(), duration_hist[i], petColors[i % petColors.size()]);
         }
         histogram.plot();
@@ -316,9 +447,10 @@ void setup()
         histogram.setTitle("Interval (Hours) - Normalized");
         histogram.setBinCount(40);
         histogram.setNormalization(true); // Enable normalization
-        
+
         // Loop and add all pets
-        for (int i = 0; i < numPets; ++i) {
+        for (int i = 0; i < numPets; ++i)
+        {
           histogram.addSeries(pets[i].name.c_str(), interval_hist[i], petColors[i % petColors.size()]);
         }
         histogram.plot();
@@ -327,24 +459,26 @@ void setup()
       case Histograms:
       {
         display.fillScreen(GxEPD_WHITE);
-        Histogram histogram1(&display, 0, 0, display.width(), display.height()/2);
+        Histogram histogram1(&display, 0, 0, display.width(), display.height() / 2);
         histogram1.setTitle("Interval (Hours) - Normalized");
         histogram1.setBinCount(30);
         histogram1.setNormalization(true); // Enable normalization
-        
+
         // Loop and add all pets to histogram 1
-        for (int i = 0; i < numPets; ++i) {
+        for (int i = 0; i < numPets; ++i)
+        {
           histogram1.addSeries(pets[i].name.c_str(), interval_hist[i], petColors[i % petColors.size()]);
         }
         histogram1.plot();
 
-        Histogram histogram2(&display, 0, display.height()/2, display.width(), display.height()/2);
+        Histogram histogram2(&display, 0, display.height() / 2, display.width(), display.height() / 2);
         histogram2.setTitle("Duration (Minutes) - Normalized");
         histogram2.setBinCount(30);
         histogram2.setNormalization(true); // Enable normalization
-        
+
         // Loop and add all pets to histogram 2
-        for (int i = 0; i < numPets; ++i) {
+        for (int i = 0; i < numPets; ++i)
+        {
           histogram2.addSeries(pets[i].name.c_str(), duration_hist[i], petColors[i % petColors.size()]);
         }
         histogram2.plot();
@@ -353,33 +487,36 @@ void setup()
       case ComboPlot:
       {
         display.fillScreen(GxEPD_WHITE);
-        Histogram histogram1(&display, 0, display.height()*2 / 3, display.width()/2, display.height()/3);
-        histogram1.setTitle("Interval (Hours)"); 
+        Histogram histogram1(&display, 0, display.height() * 2 / 3, display.width() / 2, display.height() / 3);
+        histogram1.setTitle("Interval (Hours)");
         histogram1.setBinCount(20);
         histogram1.setNormalization(true); // Enable normalization
-        
+
         // Loop and add all pets to histogram 1
-        for (int i = 0; i < numPets; ++i) {
+        for (int i = 0; i < numPets; ++i)
+        {
           histogram1.addSeries(pets[i].name.c_str(), interval_hist[i], petColors[i % petColors.size()]);
         }
         histogram1.plot();
 
-        Histogram histogram2(&display, display.width()/2, display.height()*2 / 3, display.width()/2, display.height()/3);
-        histogram2.setTitle("Duration (Minutes)"); 
+        Histogram histogram2(&display, display.width() / 2, display.height() * 2 / 3, display.width() / 2, display.height() / 3);
+        histogram2.setTitle("Duration (Minutes)");
         histogram2.setBinCount(20);
         histogram2.setNormalization(true); // Enable normalization
-        
+
         // Loop and add all pets to histogram 2
-        for (int i = 0; i < numPets; ++i) {
+        for (int i = 0; i < numPets; ++i)
+        {
           histogram2.addSeries(pets[i].name.c_str(), duration_hist[i], petColors[i % petColors.size()]);
         }
         histogram2.plot();
 
-        myPlot = new ScatterPlot(&display, 0, 0, EPD_WIDTH, EPD_HEIGHT*2/3);
+        myPlot = new ScatterPlot(&display, 0, 0, EPD_WIDTH, EPD_HEIGHT * 2 / 3);
         myPlot->setLabels("Weight (lb)", "Date", "Weight(lb)");
-        
+
         // Loop and add all pets to scatter plot
-        for (int i = 0; i < numPets; ++i) {
+        for (int i = 0; i < numPets; ++i)
+        {
           myPlot->addSeries(pets[i].name.c_str(), pet_scatterplot[i], petColors[i % petColors.size()]);
         }
         myPlot->draw();
@@ -387,10 +524,9 @@ void setup()
       break;
 
       default:
-      break;
+        break;
       }
       // --- END REFACTORED PLOTTING BLOCK ---
-     
     }
     else
     {
@@ -399,13 +535,41 @@ void setup()
   }
   else
   {
-    ////provisioning
-    //update epaper with message
+    // Start provisioning
+    provisioner.startProvisioning();
+    preferences.end();
+    WiFi.disconnect();
+    ESP.restart();
+    // update epaper with message
     Serial.println("Login failed. Starting Provisioning Service to provide updated credentials.");
-    
   }
-  
-  //display plots and go for long nap
+  if (latest_status.device_name != "")
+  {
+
+    display.setFont(NULL);
+    display.setTextSize(0);
+    display.setTextColor(EPD_BLACK);
+
+    char buffer[32];
+    int16_t x = EPD_WIDTH * 3 / 4, y = 2, x1, y1;
+    uint16_t w, h;
+    sprintf(buffer, "Litter: %d%%", latest_status.litter_percent);
+    display.getTextBounds(buffer, x, y, &x1, &y1, &w, &h);
+    x = EPD_WIDTH - 20 - w - 90;
+    display.setCursor(x, h / 2);
+    display.print(buffer);
+
+    display.setCursor(x, 3 * h / 2 + 4);
+    if (latest_status.box_full)
+    {
+      display.print("FULL");
+    }
+    else
+    {
+      display.print("Box OK");
+    }
+  }
+  // display plots and go for long nap
   display.display();
   preferences.putInt(NVS_PLOT_TYPE_KEY, plotindex);
   Serial.println("enter deep sleep");
@@ -437,7 +601,7 @@ bool initializeFromRtc()
   }
 
   DateTime rtcnow = rtc.now();
-  if (rtcnow.year() < 2024) 
+  if (rtcnow.year() < 2024)
   {
     Serial.printf("[WARN] RTC has an invalid time (Year: %d). Waiting for WiFi sync.\n", rtcnow.year());
     return false;
@@ -468,12 +632,13 @@ bool getTimezoneAndSync()
   WiFiClientSecure client;
   client.setCACert(root_ca_worldtimeapi);
   HTTPClient http;
+  http.addHeader("Content-Type", "application/json");
   bool tz_success = false;
 
   // --- Retry loop for fetching timezone ---
   for (int i = 0; i < MAX_SYNC_RETRIES; ++i)
   {
-    delay(random(200, 2000));
+    //delay(random(200, 2000));
     Serial.printf("[Time Sync] Fetching timezone, attempt %d/%d...\n", i + 1, MAX_SYNC_RETRIES);
     if (http.begin(client, TIME_API_URL))
     {
@@ -488,6 +653,8 @@ bool getTimezoneAndSync()
           const char *tz_iana = doc["timezone"];
           if (tz_iana)
           {
+            Serial.print("Found petkit (IANA) timezone: ");
+            Serial.println(tz_iana);
             preferences.putString(NVS_PETKIT_TIMEZONE_KEY, tz_iana);
             const char *tz_posix = TzDbLookup::getPosix(tz_iana);
             strncpy(time_zone, tz_posix, sizeof(time_zone) - 1);
@@ -501,6 +668,7 @@ bool getTimezoneAndSync()
       }
       http.end();
     }
+
     Serial.println("[Time Sync] Failed to fetch timezone on this attempt.");
     delay(500);
   }

@@ -260,9 +260,9 @@ void ScatterPlot::add_refresh_timestamp()
     display->setFont(NULL);
     display->setTextSize(1);
     display->getTextBounds(strftime_buf, x, y, &x1, &y1, &w, &h);
-    x = EPD_WIDTH - w - 5;
+    x = EPD_WIDTH - MARGIN_RIGHT - w;
     
-    drawString(x, h+1, strftime_buf, NULL, EPD_BLACK); // Use NULL font for default
+    drawString(x, h/2, strftime_buf, NULL, EPD_BLACK); // Use NULL font for default
 
     int mv = analogReadMilliVolts(BATTERY_ADC_PIN);
     float battery_voltage = (mv / 1000.0) * 2;
@@ -274,7 +274,7 @@ void ScatterPlot::add_refresh_timestamp()
     char buffer[32];
     sprintf(buffer, "Battery: %.2fV", battery_voltage);
     display->getTextBounds(buffer, x, y, &x1, &y1, &w, &h);
-    drawString(EPD_WIDTH - w - 5 , 2*h + 4, buffer, NULL, EPD_BLACK); // Use NULL font
+    drawString(EPD_WIDTH - w - MARGIN_RIGHT , h *3/2+4, buffer, NULL, EPD_BLACK); // Use NULL font
 }
 
 void ScatterPlot::drawDashedLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1, uint16_t color, uint16_t dashLength, uint16_t spaceLength)
