@@ -2,6 +2,11 @@
 #include <WiFi.h>
 #include "config.h"
 #include "PetKitApi.h"
+#include "esp_heap_caps.h"
+
+const int limit = 10000;
+
+
 #if (EPD_SELECT == 1002)
 #include <GxEPD2_7C.h>
 #elif (EPD_SELECT == 1001)
@@ -19,6 +24,7 @@
 #include "ScatterPlot.h"
 #include "histogram.h"
 #include <vector>
+#include <map>
 #include "Adafruit_SHT4x.h"
 #include <TzDbLookup.h>
 #include "WiFiProvisioner.h"
@@ -30,7 +36,14 @@ SPIClass hspi(HSPI);
 RTC_PCF8563 rtc;
 ScatterPlot *myPlot;
 Adafruit_SHT4x sht4 = Adafruit_SHT4x();
+GxEPD2_DISPLAY_CLASS<GxEPD2_DRIVER_CLASS, MAX_HEIGHT(GxEPD2_DRIVER_CLASS)>* display;
+//GxEPD2_DISPLAY_CLASS<GxEPD2_DRIVER_CLASS, MAX_HEIGHT(GxEPD2_DRIVER_CLASS)> display(GxEPD2_DRIVER_CLASS(/*CS=*/EPD_CS_PIN, /*DC=*/EPD_DC_PIN,/*RST=*/EPD_RES_PIN, /*BUSY=*/EPD_BUSY_PIN));
 
+// Maps: Pet ID -> (Map of: Timestamp -> Record)
+std::map<int, std::map<time_t, LitterboxRecord>> allPetData;
+
+// Define the SD card filename
+#define SD_DATA_FILE "/pet_data.json"
 
 String petkitUser;
 String petkitPass;
@@ -38,9 +51,7 @@ String petkitRegion;
 String petkitTZ;
 
 std::vector<uint16_t> petColors = {EPD_RED, EPD_BLUE, EPD_GREEN, EPD_YELLOW, EPD_BLACK};
-GxEPD2_DISPLAY_CLASS<GxEPD2_DRIVER_CLASS, MAX_HEIGHT(GxEPD2_DRIVER_CLASS)>
-    display(GxEPD2_DRIVER_CLASS(/*CS=*/EPD_CS_PIN, /*DC=*/EPD_DC_PIN,
-                                /*RST=*/EPD_RES_PIN, /*BUSY=*/EPD_BUSY_PIN));
+
 StatusRecord latest_status;
 char time_zone[64];
 
@@ -74,6 +85,8 @@ int plotindex = 0;
 
 bool getTimezoneAndSync();
 bool initializeFromRtc();
+void saveDataToSD(const std::map<int, std::map<time_t, LitterboxRecord>> &petData);
+void loadDataFromSD(std::map<int, std::map<time_t, LitterboxRecord>> &petData);
 
 void button_1_isr()
 {
@@ -105,9 +118,11 @@ void button_2_isr()
 void setup()
 {
   Serial.begin(115200);
-
   psramInit();
-
+  if(psramFound()) Serial.println("Found and Initialized PSRAM");
+  else Serial.println("No PSRAM Found");
+  heap_caps_malloc_extmem_enable(limit);
+  display = new GxEPD2_DISPLAY_CLASS<GxEPD2_DRIVER_CLASS, MAX_HEIGHT(GxEPD2_DRIVER_CLASS)>(GxEPD2_DRIVER_CLASS(/*CS=*/EPD_CS_PIN, /*DC=*/EPD_DC_PIN,/*RST=*/EPD_RES_PIN, /*BUSY=*/EPD_BUSY_PIN));
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
   pinMode(EPD_RES_PIN, OUTPUT);
@@ -119,10 +134,34 @@ void setup()
   pinMode(BUTTON_KEY2, INPUT);
 
   preferences.begin(NVS_NAMESPACE);
+  // Configure ADC
+  analogReadResolution(12); // 12-bit resolution
+  analogSetPinAttenuation(BATTERY_ADC_PIN, ADC_11db);
+
+  // Initialize SPI
+  hspi.begin(EPD_SCK_PIN, SD_MISO_PIN, EPD_MOSI_PIN, -1);
+  display->epd2.selectSPI(hspi, SPISettings(4000000, MSBFIRST, SPI_MODE0));
+  display->setTextSize(1);
+  pinMode(SD_EN_PIN, OUTPUT);
+  digitalWrite(SD_EN_PIN, HIGH);
+  pinMode(SD_DET_PIN, INPUT_PULLUP);
+  delay(100);
+
+  pinMode(BATTERY_ENABLE_PIN, OUTPUT);
+  digitalWrite(BATTERY_ENABLE_PIN, HIGH); // Enable battery monitoring
+  // Initialize display
+  display->init(0);
 
   if (!digitalRead(BUTTON_KEY1) && !digitalRead(BUTTON_KEY2)) // both keys pressed at powerup
   {
     uint32_t startPress = millis();
+    display->fillScreen(EPD_WHITE);
+    display->setCursor(display->width() / 3, 40);
+    display->setFont(&FreeSans9pt7b);
+    display->setTextSize(2);
+    display->setTextColor(EPD_BLACK);
+    display->println("Hold Buttons To Clear Settings");
+    display->display();
     while (!digitalRead(BUTTON_KEY1) && !digitalRead(BUTTON_KEY2) && (millis() - startPress < 3000))
     {
       digitalWrite(LED_PIN, HIGH);
@@ -134,23 +173,25 @@ void setup()
     delay(1000);
     if (!digitalRead(BUTTON_KEY1) && !digitalRead(BUTTON_KEY2))
     {
+      display->println("Cleared. Rebooting...");
+      display->display();
       Serial.println("Wifi and account details cleared");
       preferences.clear();
       preferences.putString(NVS_PETKIT_REGION_KEY, "us");
       preferences.end();
       WiFi.disconnect(true, true);
+      delay(4000);
       ESP.restart();
     }
     else
     {
+      display->fillScreen(EPD_WHITE);
+      display->display();
       digitalWrite(LED_PIN, LOW);
     }
   }
   attachInterrupt(BUTTON_KEY1, button_1_isr, FALLING);
   attachInterrupt(BUTTON_KEY2, button_2_isr, FALLING);
-
-  pinMode(BATTERY_ENABLE_PIN, OUTPUT);
-  digitalWrite(BATTERY_ENABLE_PIN, HIGH); // Enable battery monitoring
 
   plotindex = preferences.getInt(NVS_PLOT_TYPE_KEY, 0);
   if (plotindex < 0)
@@ -159,22 +200,6 @@ void setup()
     plotindex = (int)PlotType::Plot_Type_Max - 1;
   thisPlot = plotinfo[plotindex];
   preferences.putInt(NVS_PLOT_TYPE_KEY, plotindex);
-
-  // Configure ADC
-  analogReadResolution(12); // 12-bit resolution
-  analogSetPinAttenuation(BATTERY_ADC_PIN, ADC_11db);
-
-  // Initialize SPI
-  hspi.begin(EPD_SCK_PIN, SD_MISO_PIN, EPD_MOSI_PIN, -1);
-  display.epd2.selectSPI(hspi, SPISettings(4000000, MSBFIRST, SPI_MODE0));
-  display.setTextSize(1);
-  pinMode(SD_EN_PIN, OUTPUT);
-  digitalWrite(SD_EN_PIN, HIGH);
-  pinMode(SD_DET_PIN, INPUT_PULLUP);
-  delay(100);
-
-  // Initialize display
-  display.init(0);
 
   if (digitalRead(SD_DET_PIN))
   {
@@ -188,7 +213,10 @@ void setup()
       Serial.println("SD Card Mount Failed!");
     }
     else
+    {
       Serial.println("SD Card Mounted.");
+      loadDataFromSD(allPetData);
+    }
   }
 
   Wire.setPins(I2C_SDA, I2C_SCL);
@@ -223,8 +251,15 @@ void setup()
                      preferences.putString(NVS_PETKIT_PASS_KEY, pkpass);
                    }
                    Serial.println("Provisioning completed successfully! Restarting.");
-                   preferences.end();
-                 })
+                   //disp->fillScreen(EPD_WHITE);
+                   //disp->setCursor(disp->width()/3, 40);
+                   //disp->setFont(&FreeSans9pt7b );
+                   //disp->setTextSize(1);
+                  // disp->setTextColor(EPD_BLACK);
+                  // disp->print("Credentials Stored! Rebooting.");
+                   //disp->display();
+                   //delay(4000);
+                   preferences.end(); })
       .onFactoryReset([]()
                       {
         Serial.println("Factory reset triggered! Clearing preferences...");
@@ -249,7 +284,6 @@ void setup()
   }
   else
     Serial.println("No Wifi Password found in NVS");
- 
 
   WiFi.begin(WifiSSID, WifiPass);
   Serial.print("Connecting to WiFi");
@@ -268,6 +302,13 @@ void setup()
   {
     Serial.println(" Timed Out. Starting provisioning service.");
     // update epaper with message
+    display->fillScreen(EPD_WHITE);
+    display->setCursor(10, 40);
+    display->setFont(&FreeSans9pt7b);
+    display->setTextSize(1);
+    display->setTextColor(EPD_BLACK);
+    display->println("Wifi Connection Timed Out. Please connect to AP: PetkitDashboard to configure.");
+    display->display();
     provisioner.startProvisioning();
     preferences.end();
     WiFi.disconnect();
@@ -309,17 +350,35 @@ void setup()
   }
   else
   {
+    display->fillScreen(EPD_WHITE);
+    display->setCursor(10, 40);
+    display->setFont(&FreeSans9pt7b);
+    display->setTextSize(1);
+    display->setTextColor(EPD_BLACK);
     if (petkitUser.length() == 0)
+    {
       Serial.println("petkit username not found.");
+      display->println("petkit username not found.");
+    }
     if (petkitPass.length() == 0)
+    {
       Serial.println("petkit password not found.");
+      display->println("petkit password not found.");
+    }
     if (petkitRegion.length() == 0)
+    {
       Serial.println("petkit region code not found.");
+      display->println("petkit region code not found.");
+    }
     if (petkitTZ.length() == 0)
+    {
       Serial.println("petkit timezone not found.");
+      display->println("petkit timezone not found.");
+    }
     Serial.println("please use provisioning portal to load WiFi and Login Details.");
-    // update epaper with message
-    //  Start provisioning
+    display->setCursor(10, 80);
+    display->println("please Connect to PetkitDashboard WiFI AP to load credentials");
+    display->display();
     provisioner.startProvisioning();
     preferences.end();
     WiFi.disconnect();
@@ -328,10 +387,44 @@ void setup()
 
   if (petkit->login())
   {
-    Serial.println("\nLogin successful! Fetching data...");
+    Serial.println("\nLogin successful!");
+    // 1. Find the latest timestamp from all loaded SD data
+    time_t latestTimestamp = 0;
 
+    // C++11 compatible way
+    for (auto const &petPair : allPetData)
+    {
+      // int petId = petPair.first; // Key (if you need it)
+      const std::map<time_t, LitterboxRecord> &recordsMap = petPair.second; // Value
+
+      if (!recordsMap.empty())
+      {
+        // .rbegin()->first still works fine
+        time_t petLatest = recordsMap.rbegin()->first;
+        if (petLatest > latestTimestamp)
+        {
+          latestTimestamp = petLatest;
+        }
+      }
+    }
+
+    // 2. Calculate days to fetch
+    int daysToFetch = 30; // Default to 30 days (max)
+
+    if (latestTimestamp > 0)
+    {
+      time_t now = time(NULL);
+      long secondsDifference = now - latestTimestamp;
+      Serial.printf("Latest timestamp from SD card: %lu, %f days ago.\r\n", latestTimestamp, (float)secondsDifference / (60.0 * 60.0 * 24.0));
+      // Convert seconds to days, add 1 to be safe (to cover the partial day)
+      int daysDifference = (int)(secondsDifference / 86400) + 1;
+
+      // Clamp the value: must be at least 1, but no more than 30
+      daysToFetch = std::min(std::max(daysDifference, 1), 30);
+      Serial.printf("Requesting %d days of data from petkit servers.\r\n", daysToFetch);
+    }
     // fetchAllData() gets devices, pets, and historical records in one call
-    if (petkit->fetchAllData(30))
+    if (petkit->fetchAllData(daysToFetch))
     {
       // --- Get Pet Information ---
       const auto &pets = petkit->getPets();
@@ -362,7 +455,7 @@ void setup()
         Serial.println("---------------------");
       }
 
-      // --- Create plot data vectors dynamically based on number of pets ---
+      // --- Create plot data vectors dynamically based on number of pets, (these will be populated from the map) ---
       size_t numPets = pets.size();
       std::vector<LitterboxRecord> pet_records[numPets];
       std::vector<DataPoint> pet_scatterplot[numPets];
@@ -370,6 +463,33 @@ void setup()
       std::vector<float> interval_hist[numPets];
       std::vector<float> duration_hist[numPets];
 
+      Serial.println("\n--- Merging API records with local data ---");
+      int idx = 0;
+      for (const auto &pet : pets)
+      {
+        // Get records from API
+        pet_records[idx] = petkit->getLitterboxRecordsByPetId(pet.id);
+
+        if (pet_records[idx].empty())
+        {
+          Serial.printf("No new API records for %s.\n", pet.name.c_str());
+        }
+        else
+        {
+          Serial.printf("Merging %d new API records for %s.\n", pet_records[idx].size(), pet.name.c_str());
+        }
+
+        // *** MERGE API DATA INTO OUR MAP ***
+        for (const auto &record : pet_records[idx])
+        {
+          allPetData[pet.id][record.timestamp] = record;
+        }
+        idx++;
+      }
+
+      // *** SAVE THE MERGED DATA BACK TO SD CARD ***
+      saveDataToSD(allPetData);
+      /*
       Serial.println("\n--- Historical Records by Pet ---");
       int idx = 0;
       for (const auto &pet : pets)
@@ -407,13 +527,49 @@ void setup()
         idx++;
         lastTimestamp = -1.0;
       }
+      */
+      Serial.println("\n--- Processing all historical records for plotting ---");
+      idx = 0;
+      for (const auto &pet : pets)
+      {
+        Serial.printf("\n--- Processing records for %s (ID: %d) ---\n", pet.name.c_str(), pet.id);
+
+        // *** POPULATE PLOT VECTORS FROM THE MAP (allPetData) ***
+        if (allPetData.find(pet.id) == allPetData.end() || allPetData[pet.id].empty())
+        {
+          Serial.println("No historical records found for this pet.");
+          idx++;
+          continue;
+        }
+
+        time_t lastTimestamp = -1;
+        // Iterate through the map (which is sorted by timestamp)
+        // C++11 compatible way
+        for (auto const &recordPair : allPetData[pet.id])
+        {
+          // time_t timestamp = recordPair.first; // Key (if you need it)
+          const LitterboxRecord &record = recordPair.second; // Value
+
+          float weight_lbs = (float)record.weight_grams / GRAMS_PER_POUND;
+
+          pet_scatterplot[idx].push_back({(float)record.timestamp, weight_lbs});
+          weight_hist[idx].push_back(weight_lbs);
+          duration_hist[idx].push_back((float)record.duration_seconds / 60.0);
+
+          if (lastTimestamp > 0)
+            interval_hist[idx].push_back(((float)(record.timestamp - lastTimestamp)) / 3600.0);
+          lastTimestamp = record.timestamp;
+        }
+        idx++;
+        lastTimestamp = -1.0;
+      }
 
       // --- START REFACTORED PLOTTING BLOCK ---
       switch (thisPlot.type)
       {
       case Scatterplot_Weight:
       {
-        myPlot = new ScatterPlot(&display, 0, 0, EPD_WIDTH, EPD_HEIGHT);
+        myPlot = new ScatterPlot(display, 0, 0, EPD_WIDTH, EPD_HEIGHT);
         myPlot->setLabels("Weight (lb)", "Date", "Weight(lb)");
 
         // Loop and add all pets
@@ -426,8 +582,8 @@ void setup()
       break;
       case Histogram_Duration:
       {
-        display.fillScreen(GxEPD_WHITE);
-        Histogram histogram(&display, 0, 0, display.width(), display.height());
+        display->fillScreen(GxEPD_WHITE);
+        Histogram histogram(display, 0, 0, display->width(), display->height());
         histogram.setTitle("Duration (Minutes) - Normalized");
         histogram.setBinCount(30);
         histogram.setNormalization(true); // Enable normalization
@@ -442,8 +598,8 @@ void setup()
       break;
       case Histogram_Interval:
       {
-        display.fillScreen(GxEPD_WHITE);
-        Histogram histogram(&display, 0, 0, display.width(), display.height());
+        display->fillScreen(GxEPD_WHITE);
+        Histogram histogram(display, 0, 0, display->width(), display->height());
         histogram.setTitle("Interval (Hours) - Normalized");
         histogram.setBinCount(40);
         histogram.setNormalization(true); // Enable normalization
@@ -458,8 +614,8 @@ void setup()
       break;
       case Histograms:
       {
-        display.fillScreen(GxEPD_WHITE);
-        Histogram histogram1(&display, 0, 0, display.width(), display.height() / 2);
+        display->fillScreen(GxEPD_WHITE);
+        Histogram histogram1(display, 0, 0, display->width(), display->height() / 2);
         histogram1.setTitle("Interval (Hours) - Normalized");
         histogram1.setBinCount(30);
         histogram1.setNormalization(true); // Enable normalization
@@ -471,7 +627,7 @@ void setup()
         }
         histogram1.plot();
 
-        Histogram histogram2(&display, 0, display.height() / 2, display.width(), display.height() / 2);
+        Histogram histogram2(display, 0, display->height() / 2, display->width(), display->height() / 2);
         histogram2.setTitle("Duration (Minutes) - Normalized");
         histogram2.setBinCount(30);
         histogram2.setNormalization(true); // Enable normalization
@@ -486,8 +642,8 @@ void setup()
       break;
       case ComboPlot:
       {
-        display.fillScreen(GxEPD_WHITE);
-        Histogram histogram1(&display, 0, display.height() * 2 / 3, display.width() / 2, display.height() / 3);
+        display->fillScreen(GxEPD_WHITE);
+        Histogram histogram1(display, 0, display->height() * 2 / 3, display->width() / 2, display->height() / 3);
         histogram1.setTitle("Interval (Hours)");
         histogram1.setBinCount(20);
         histogram1.setNormalization(true); // Enable normalization
@@ -499,7 +655,7 @@ void setup()
         }
         histogram1.plot();
 
-        Histogram histogram2(&display, display.width() / 2, display.height() * 2 / 3, display.width() / 2, display.height() / 3);
+        Histogram histogram2(display, display->width() / 2, display->height() * 2 / 3, display->width() / 2, display->height() / 3);
         histogram2.setTitle("Duration (Minutes)");
         histogram2.setBinCount(20);
         histogram2.setNormalization(true); // Enable normalization
@@ -511,7 +667,7 @@ void setup()
         }
         histogram2.plot();
 
-        myPlot = new ScatterPlot(&display, 0, 0, EPD_WIDTH, EPD_HEIGHT * 2 / 3);
+        myPlot = new ScatterPlot(display, 0, 0, EPD_WIDTH, EPD_HEIGHT * 2 / 3);
         myPlot->setLabels("Weight (lb)", "Date", "Weight(lb)");
 
         // Loop and add all pets to scatter plot
@@ -536,6 +692,13 @@ void setup()
   else
   {
     // Start provisioning
+    display->fillScreen(EPD_WHITE);
+    display->setCursor(10, 40);
+    display->setFont(&FreeSans9pt7b);
+    display->setTextSize(1);
+    display->setTextColor(EPD_BLACK);
+    display->println("please Connect to PetkitDashboard WiFI AP to load credentials");
+    display->display();
     provisioner.startProvisioning();
     preferences.end();
     WiFi.disconnect();
@@ -546,31 +709,32 @@ void setup()
   if (latest_status.device_name != "")
   {
 
-    display.setFont(NULL);
-    display.setTextSize(0);
-    display.setTextColor(EPD_BLACK);
+    display->setFont(NULL);
+    display->setTextSize(0);
+    display->setTextColor(EPD_BLACK);
 
     char buffer[32];
     int16_t x = EPD_WIDTH * 3 / 4, y = 2, x1, y1;
     uint16_t w, h;
     sprintf(buffer, "Litter: %d%%", latest_status.litter_percent);
-    display.getTextBounds(buffer, x, y, &x1, &y1, &w, &h);
+    display->getTextBounds(buffer, x, y, &x1, &y1, &w, &h);
     x = EPD_WIDTH - 20 - w - 90;
-    display.setCursor(x, h / 2);
-    display.print(buffer);
+    display->setCursor(x, h / 2);
+    display->print(buffer);
 
-    display.setCursor(x, 3 * h / 2 + 4);
+    display->setCursor(x, 3 * h / 2 + 4);
     if (latest_status.box_full)
     {
-      display.print("FULL");
+      display->print("FULL");
     }
     else
     {
-      display.print("Box OK");
+      display->print("Box OK");
     }
   }
   // display plots and go for long nap
-  display.display();
+  display->display();
+  display->hibernate();
   preferences.putInt(NVS_PLOT_TYPE_KEY, plotindex);
   Serial.println("enter deep sleep");
   uint64_t sleepInterval = 1000000ull * 60ull * 60ull * 3ull; // 3hr
@@ -638,7 +802,7 @@ bool getTimezoneAndSync()
   // --- Retry loop for fetching timezone ---
   for (int i = 0; i < MAX_SYNC_RETRIES; ++i)
   {
-    //delay(random(200, 2000));
+    // delay(random(200, 2000));
     Serial.printf("[Time Sync] Fetching timezone, attempt %d/%d...\n", i + 1, MAX_SYNC_RETRIES);
     if (http.begin(client, TIME_API_URL))
     {
@@ -710,4 +874,97 @@ bool getTimezoneAndSync()
 
   Serial.println("[Time Sync] Failed to sync NTP after all retries.");
   return false;
+}
+
+void loadDataFromSD(std::map<int, std::map<time_t, LitterboxRecord>> &petData)
+{
+  if (!SD.exists(SD_DATA_FILE))
+  {
+    Serial.println("No data file found on SD card. Will create one.");
+    return;
+  }
+
+  File file = SD.open(SD_DATA_FILE, FILE_READ);
+  if (!file)
+  {
+    Serial.println("Failed to open data file for reading.");
+    return;
+  }
+
+  // Use DynamicJsonDocument for unknown file sizes
+  // Adjust size as needed, ESP32-S3 has PSRAM
+  JsonDocument doc; // 30KB, adjust as your history grows
+
+  DeserializationError error = deserializeJson(doc, file);
+  file.close();
+
+  if (error)
+  {
+    Serial.print("Failed to parse JSON, error: ");
+    Serial.println(error.c_str());
+    return;
+  }
+
+  JsonObject root = doc.as<JsonObject>();
+  for (JsonPair petPair : root)
+  {
+    int petId = atoi(petPair.key().c_str());
+    JsonArray records = petPair.value().as<JsonArray>();
+
+    for (JsonObject recordJson : records)
+    {
+      LitterboxRecord rec;
+      rec.timestamp = recordJson["ts"];
+      rec.weight_grams = recordJson["w_g"];
+      rec.duration_seconds = recordJson["dur_s"];
+      rec.pet_id = petId; // Assuming LitterboxRecord has a petId field
+
+      // Add to our map. The map structure automatically handles duplicates.
+      petData[petId][rec.timestamp] = rec;
+    }
+  }
+  Serial.println("Successfully loaded historical data from SD card.");
+}
+
+void saveDataToSD(const std::map<int, std::map<time_t, LitterboxRecord>> &petData)
+{
+  JsonDocument doc; // 30KB, adjust as your history grows
+  JsonObject root = doc.to<JsonObject>();
+
+  // C++11 compatible way to iterate the outer map
+  for (auto const &petPair : petData)
+  {
+    int petId = petPair.first;
+    const std::map<time_t, LitterboxRecord> &recordsMap = petPair.second;
+
+    JsonArray petArray = root.createNestedArray(String(petId));
+
+    // C++11 compatible way to iterate the inner map
+    for (auto const &recordPair : recordsMap)
+    {
+      // time_t timestamp = recordPair.first; // Key (if you need it)
+      const LitterboxRecord &record = recordPair.second; // Value
+
+      JsonObject recJson = petArray.createNestedObject();
+      recJson["ts"] = record.timestamp;
+      recJson["w_g"] = record.weight_grams;
+      recJson["dur_s"] = record.duration_seconds;
+    }
+  }
+  File file = SD.open(SD_DATA_FILE, FILE_WRITE);
+  if (!file)
+  {
+    Serial.println("Failed to open data file for writing.");
+    return;
+  }
+
+  if (serializeJson(doc, file) == 0)
+  {
+    Serial.println("Failed to write to data file.");
+  }
+  else
+  {
+    Serial.println("Successfully saved updated data to SD card.");
+  }
+  file.close();
 }
