@@ -6,7 +6,6 @@
 
 const int limit = 10000;
 
-
 #if (EPD_SELECT == 1002)
 #include <GxEPD2_7C.h>
 #elif (EPD_SELECT == 1001)
@@ -36,8 +35,8 @@ SPIClass hspi(HSPI);
 RTC_PCF8563 rtc;
 ScatterPlot *myPlot;
 Adafruit_SHT4x sht4 = Adafruit_SHT4x();
-GxEPD2_DISPLAY_CLASS<GxEPD2_DRIVER_CLASS, MAX_HEIGHT(GxEPD2_DRIVER_CLASS)>* display;
-//GxEPD2_DISPLAY_CLASS<GxEPD2_DRIVER_CLASS, MAX_HEIGHT(GxEPD2_DRIVER_CLASS)> display(GxEPD2_DRIVER_CLASS(/*CS=*/EPD_CS_PIN, /*DC=*/EPD_DC_PIN,/*RST=*/EPD_RES_PIN, /*BUSY=*/EPD_BUSY_PIN));
+GxEPD2_DISPLAY_CLASS<GxEPD2_DRIVER_CLASS, MAX_HEIGHT(GxEPD2_DRIVER_CLASS)> *display;
+// GxEPD2_DISPLAY_CLASS<GxEPD2_DRIVER_CLASS, MAX_HEIGHT(GxEPD2_DRIVER_CLASS)> display(GxEPD2_DRIVER_CLASS(/*CS=*/EPD_CS_PIN, /*DC=*/EPD_DC_PIN,/*RST=*/EPD_RES_PIN, /*BUSY=*/EPD_BUSY_PIN));
 
 // Maps: Pet ID -> (Map of: Timestamp -> Record)
 std::map<int, std::map<time_t, LitterboxRecord>> allPetData;
@@ -54,6 +53,8 @@ std::vector<uint16_t> petColors = {EPD_RED, EPD_BLUE, EPD_GREEN, EPD_YELLOW, EPD
 
 StatusRecord latest_status;
 char time_zone[64];
+
+float battery_voltage = 0;
 
 enum PlotType
 {
@@ -119,10 +120,12 @@ void setup()
 {
   Serial.begin(115200);
   psramInit();
-  if(psramFound()) Serial.println("Found and Initialized PSRAM");
-  else Serial.println("No PSRAM Found");
+  if (psramFound())
+    Serial.println("Found and Initialized PSRAM");
+  else
+    Serial.println("No PSRAM Found");
   heap_caps_malloc_extmem_enable(limit);
-  display = new GxEPD2_DISPLAY_CLASS<GxEPD2_DRIVER_CLASS, MAX_HEIGHT(GxEPD2_DRIVER_CLASS)>(GxEPD2_DRIVER_CLASS(/*CS=*/EPD_CS_PIN, /*DC=*/EPD_DC_PIN,/*RST=*/EPD_RES_PIN, /*BUSY=*/EPD_BUSY_PIN));
+  display = new GxEPD2_DISPLAY_CLASS<GxEPD2_DRIVER_CLASS, MAX_HEIGHT(GxEPD2_DRIVER_CLASS)>(GxEPD2_DRIVER_CLASS(/*CS=*/EPD_CS_PIN, /*DC=*/EPD_DC_PIN, /*RST=*/EPD_RES_PIN, /*BUSY=*/EPD_BUSY_PIN));
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
   pinMode(EPD_RES_PIN, OUTPUT);
@@ -141,7 +144,7 @@ void setup()
   // Initialize SPI
   hspi.begin(EPD_SCK_PIN, SD_MISO_PIN, EPD_MOSI_PIN, -1);
   display->epd2.selectSPI(hspi, SPISettings(4000000, MSBFIRST, SPI_MODE0));
-  display->setTextSize(1);
+
   pinMode(SD_EN_PIN, OUTPUT);
   digitalWrite(SD_EN_PIN, HIGH);
   pinMode(SD_DET_PIN, INPUT_PULLUP);
@@ -151,6 +154,8 @@ void setup()
   digitalWrite(BATTERY_ENABLE_PIN, HIGH); // Enable battery monitoring
   // Initialize display
   display->init(0);
+
+  display->setTextSize(1);
 
   if (!digitalRead(BUTTON_KEY1) && !digitalRead(BUTTON_KEY2)) // both keys pressed at powerup
   {
@@ -316,6 +321,15 @@ void setup()
   }
   digitalWrite(LED_PIN, LOW);
 
+  petkitTZ = preferences.getString(NVS_PETKIT_TIMEZONE_KEY, "");
+  if (petkitTZ.length() > 0)
+  {
+    Serial.print("Recalled Petkit Timezone from NVS: ");
+    Serial.println(petkitTZ);
+  }
+  else
+    Serial.println("No Petkit Timezone found in NVS");
+
   getTimezoneAndSync();
 
   petkitUser = preferences.getString(NVS_PETKIT_USER_KEY, "");
@@ -334,14 +348,6 @@ void setup()
   else
     Serial.println("No Petkit Password found in NVS");
   petkitRegion = preferences.getString(NVS_PETKIT_REGION_KEY, "");
-  petkitTZ = preferences.getString(NVS_PETKIT_TIMEZONE_KEY, "");
-  if (petkitTZ.length() > 0)
-  {
-    Serial.print("Recalled Petkit Timezone from NVS: ");
-    Serial.println(petkitTZ);
-  }
-  else
-    Serial.println("No Petkit Timezone found in NVS");
 
   if ((petkitUser.length() > 0) && (petkitPass.length() > 0) && (petkitRegion.length() > 0) && (petkitTZ.length() > 0))
   {
@@ -417,9 +423,9 @@ void setup()
       long secondsDifference = now - latestTimestamp;
       Serial.printf("Latest timestamp from SD card: %lu, %f days ago.\r\n", latestTimestamp, (float)secondsDifference / (60.0 * 60.0 * 24.0));
       // Convert seconds to days, add 1 to be safe (to cover the partial day)
-      int daysDifference = (int)(secondsDifference / 86400) + 1;
+      int daysDifference = (int)(secondsDifference / 86400) + 2;
 
-      // Clamp the value: must be at least 1, but no more than 30
+      // Clamp the value: must be at least 2, but no more than 30
       daysToFetch = std::min(std::max(daysDifference, 1), 30);
       Serial.printf("Requesting %d days of data from petkit servers.\r\n", daysToFetch);
     }
@@ -489,45 +495,7 @@ void setup()
 
       // *** SAVE THE MERGED DATA BACK TO SD CARD ***
       saveDataToSD(allPetData);
-      /*
-      Serial.println("\n--- Historical Records by Pet ---");
-      int idx = 0;
-      for (const auto &pet : pets)
-      {
-        Serial.printf("\n--- Records for %s (ID: %d) ---\n", pet.name.c_str(), pet.id);
-
-        // Use the helper function to get a vector of records just for this pet
-        pet_records[idx] = petkit->getLitterboxRecordsByPetId(pet.id);
-
-        if (pet_records[idx].empty())
-        {
-          Serial.println("No records found for this pet in the last 30 days.");
-          idx++; // Don't forget to increment index even if no records
-          continue;
-        }
-        time_t lastTimestamp = -1;
-        // Now, loop through the filtered list for this specific pet
-        for (const auto &record : pet_records[idx])
-        {
-          float weight_lbs = (float)record.weight_grams / GRAMS_PER_POUND;
-          char timeStr[32];
-          strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M", localtime(&record.timestamp));
-
-          Serial.printf("[%s] Weight: %.2f lbs, Duration: %d sec\n",
-                        timeStr,
-                        weight_lbs,
-                        record.duration_seconds);
-          pet_scatterplot[idx].push_back({(float)record.timestamp, ((float)record.weight_grams / (float)GRAMS_PER_POUND)});
-          weight_hist[idx].push_back((float)record.weight_grams / (float)GRAMS_PER_POUND);
-          duration_hist[idx].push_back((float)record.duration_seconds / 60.0);
-          if (lastTimestamp > 0)
-            interval_hist[idx].push_back(((float)(lastTimestamp - record.timestamp)) / 3600.0);
-          lastTimestamp = record.timestamp;
-        }
-        idx++;
-        lastTimestamp = -1.0;
-      }
-      */
+      
       Serial.println("\n--- Processing all historical records for plotting ---");
       idx = 0;
       for (const auto &pet : pets)
@@ -706,9 +674,9 @@ void setup()
     // update epaper with message
     Serial.println("Login failed. Starting Provisioning Service to provide updated credentials.");
   }
+  latest_status = petkit->getLatestStatus();
   if (latest_status.device_name != "")
   {
-
     display->setFont(NULL);
     display->setTextSize(0);
     display->setTextColor(EPD_BLACK);
@@ -718,7 +686,7 @@ void setup()
     uint16_t w, h;
     sprintf(buffer, "Litter: %d%%", latest_status.litter_percent);
     display->getTextBounds(buffer, x, y, &x1, &y1, &w, &h);
-    x = EPD_WIDTH - 20 - w - 90;
+    x = EPD_WIDTH - 20 - w - 120;
     display->setCursor(x, h / 2);
     display->print(buffer);
 
@@ -732,9 +700,33 @@ void setup()
       display->print("Box OK");
     }
   }
+
+  int mv = analogReadMilliVolts(BATTERY_ADC_PIN);
+  battery_voltage = (mv / 1000.0) * 2;
+  int16_t x = 0, y = 0, x1 = 0, y1 = 0;
+  uint16_t w = 0, h = 0;
+  if (battery_voltage >= 4.2)
+  {
+    battery_voltage = 4.2;
+  }
+  char buffer[32];
+  sprintf(buffer, "Battery: %.2fV", battery_voltage);
+  display->getTextBounds(buffer, x, y, &x1, &y1, &w, &h);
+  x = EPD_WIDTH - w - 20;
+  y = h * 3 / 2 + 4;
+  display->setFont(NULL); // Use the provided font
+  display->setTextSize(1);
+  display->setTextColor(EPD_BLACK); // Use the provided color
+  display->setCursor(x, y);
+  display->print(buffer);
+
   // display plots and go for long nap
   display->display();
-  display->hibernate();
+  if (battery_voltage < 3.70)
+  {
+    delay(4000); // display seems to go a bit dark
+    display->hibernate();
+  }
   preferences.putInt(NVS_PLOT_TYPE_KEY, plotindex);
   Serial.println("enter deep sleep");
   uint64_t sleepInterval = 1000000ull * 60ull * 60ull * 3ull; // 3hr
@@ -797,52 +789,55 @@ bool getTimezoneAndSync()
   client.setCACert(root_ca_worldtimeapi);
   HTTPClient http;
   http.addHeader("Content-Type", "application/json");
-  bool tz_success = false;
 
-  // --- Retry loop for fetching timezone ---
-  for (int i = 0; i < MAX_SYNC_RETRIES; ++i)
+  if (petkitTZ.equals(""))
   {
-    // delay(random(200, 2000));
-    Serial.printf("[Time Sync] Fetching timezone, attempt %d/%d...\n", i + 1, MAX_SYNC_RETRIES);
-    if (http.begin(client, TIME_API_URL))
+    bool tz_success = false;
+    // --- Retry loop for fetching timezone ---
+    for (int i = 0; i < MAX_SYNC_RETRIES; ++i)
     {
-      http.setConnectTimeout(8000);
-      int httpCode = http.GET();
-
-      if (httpCode == HTTP_CODE_OK)
+      // delay(random(200, 2000));
+      Serial.printf("[Time Sync] Fetching timezone, attempt %d/%d...\n", i + 1, MAX_SYNC_RETRIES);
+      if (http.begin(client, TIME_API_URL))
       {
-        JsonDocument doc;
-        if (deserializeJson(doc, http.getStream()).code() == DeserializationError::Ok)
+        http.setConnectTimeout(8000);
+        int httpCode = http.GET();
+
+        if (httpCode == HTTP_CODE_OK)
         {
-          const char *tz_iana = doc["timezone"];
-          if (tz_iana)
+          JsonDocument doc;
+          if (deserializeJson(doc, http.getStream()).code() == DeserializationError::Ok)
           {
-            Serial.print("Found petkit (IANA) timezone: ");
-            Serial.println(tz_iana);
-            preferences.putString(NVS_PETKIT_TIMEZONE_KEY, tz_iana);
-            const char *tz_posix = TzDbLookup::getPosix(tz_iana);
-            strncpy(time_zone, tz_posix, sizeof(time_zone) - 1);
-            Serial.printf("[Time Sync] Fetched Timezone (POSIX): %s)\n", tz_posix);
-            preferences.putString(NVS_TZ_KEY, time_zone);
-            tz_success = true;
-            http.end();
-            break; // Exit retry loop on success
+            const char *tz_iana = doc["timezone"];
+            if (tz_iana)
+            {
+              Serial.print("Found petkit (IANA) timezone: ");
+              Serial.println(tz_iana);
+              preferences.putString(NVS_PETKIT_TIMEZONE_KEY, tz_iana);
+              const char *tz_posix = TzDbLookup::getPosix(tz_iana);
+              strncpy(time_zone, tz_posix, sizeof(time_zone) - 1);
+              Serial.printf("[Time Sync] Fetched Timezone (POSIX): %s)\n", tz_posix);
+              preferences.putString(NVS_TZ_KEY, time_zone);
+              tz_success = true;
+              // http.end();
+              break; // Exit retry loop on success
+            }
           }
         }
+        http.end();
       }
-      http.end();
+
+      Serial.println("[Time Sync] Failed to fetch timezone on this attempt.");
+      delay(500);
     }
-
-    Serial.println("[Time Sync] Failed to fetch timezone on this attempt.");
-    delay(500);
+    if (!tz_success)
+    {
+      Serial.println("[Time Sync] Failed to fetch timezone after all retries.");
+      // return false;
+    }
   }
-
-  if (!tz_success)
-  {
-    Serial.println("[Time Sync] Failed to fetch timezone after all retries.");
-    // return false;
-  }
-
+  else
+    strncpy(time_zone, petkitTZ.c_str(), min(petkitTZ.length(), sizeof(time_zone)));
   // --- Retry loop for NTP sync ---
   for (int i = 0; i < MAX_SYNC_RETRIES; ++i)
   {
@@ -937,7 +932,8 @@ void saveDataToSD(const std::map<int, std::map<time_t, LitterboxRecord>> &petDat
     int petId = petPair.first;
     const std::map<time_t, LitterboxRecord> &recordsMap = petPair.second;
 
-    JsonArray petArray = root.createNestedArray(String(petId));
+    // JsonArray petArray = root.createNestedArray(String(petId));
+    JsonArray petArray = root[String(petId)].to<JsonArray>();
 
     // C++11 compatible way to iterate the inner map
     for (auto const &recordPair : recordsMap)
@@ -945,7 +941,8 @@ void saveDataToSD(const std::map<int, std::map<time_t, LitterboxRecord>> &petDat
       // time_t timestamp = recordPair.first; // Key (if you need it)
       const LitterboxRecord &record = recordPair.second; // Value
 
-      JsonObject recJson = petArray.createNestedObject();
+      // JsonObject recJson = petArray.createNestedObject();
+      JsonObject recJson = petArray.add<JsonObject>();
       recJson["ts"] = record.timestamp;
       recJson["w_g"] = record.weight_grams;
       recJson["dur_s"] = record.duration_seconds;

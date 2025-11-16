@@ -283,16 +283,16 @@ void Histogram::drawBars()
                     _gfx->fillRect(barStartX, _plotY + _plotH - barH, barWidth, barH, EPD_BLACK);
                     break;
                 case EPD_BLUE:
-                    drawPatternRect(barStartX, _plotY + _plotH - barH, barWidth, barH);
+                    drawCheckerRect(barStartX, _plotY + _plotH - barH, barWidth, barH);
                     break;
                 case EPD_GREEN:
-                    _gfx->drawRect(barStartX, _plotY + _plotH - barH, barWidth, barH, EPD_BLACK);
+                    drawPatternRect(barStartX, _plotY + _plotH - barH, barWidth, barH);
                     break;
                 case EPD_YELLOW:
                     drawHatchRect(barStartX, _plotY + _plotH - barH, barWidth, barH);
                     break;
                 case EPD_BLACK:
-                    drawHatchRect(barStartX, _plotY + _plotH - barH, barWidth, barH);        //TODO: come up with one more fill pattern...
+                    _gfx->drawRect(barStartX, _plotY + _plotH - barH, barWidth, barH, EPD_BLACK);        
                     break;
                 }
 #endif
@@ -323,17 +323,16 @@ void Histogram::drawLegend()
                     _gfx->fillRect(legendX, legendY, markerW, markerH, EPD_BLACK);
                     break;
                 case EPD_BLUE:
-                    drawPatternRect(legendX, legendY, markerW, markerH);    
-                    
+                    drawCheckerRect(legendX, legendY, markerW, markerH);    
                     break;
                 case EPD_GREEN:
-                    _gfx->drawRect(legendX, legendY, markerW, markerH, EPD_BLACK);
+                    drawPatternRect(legendX, legendY, markerW, markerH);
                     break;
                 case EPD_YELLOW:
                     drawHatchRect(legendX, legendY, markerW, markerH);
                     break;
                 case EPD_BLACK:
-                    drawHatchRect(legendX, legendY, markerW, markerH);        //TODO: come up with one more fill pattern...
+                    _gfx->drawRect(legendX, legendY, markerW, markerH, EPD_BLACK);        
                     break;
                 }
         #endif
@@ -398,4 +397,18 @@ void Histogram::drawHatchRect(int16_t x, int16_t y, int16_t w, int16_t h)
         // Convert relative coordinates to absolute screen coordinates and draw the line.
         _gfx->drawLine(x + x1_rel, y + y1_rel, x + x2_rel, y + y2_rel, EPD_BLACK);
     }
+}
+
+void Histogram::drawCheckerRect(int16_t x, int16_t y, int16_t w, int16_t h)
+{
+    bool checker = false;
+    for(int y1 = y; y1 < y+h; y1++ )
+    {
+        for(int x1 = x; x1 < x + w; x1++)
+        {
+            if(checker ^ ((x1-x)%2)) _gfx->drawPixel(x1, y1, EPD_BLACK);
+        }
+        checker = !checker;
+    }
+    _gfx->drawRect(x, y, w, h, EPD_BLACK);
 }

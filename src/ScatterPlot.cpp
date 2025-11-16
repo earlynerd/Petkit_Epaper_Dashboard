@@ -236,8 +236,6 @@ void ScatterPlot::drawMarker(int x, int y, uint16_t color)
 // Helper function to simplify drawing text
 void ScatterPlot::drawString(int x, int y, const String &text, const GFXfont *font, uint8_t color)
 {
-    int cursor_x = x;
-    int cursor_y = y;
     display->setFont(font); // Use the provided font
     display->setTextSize(1);
     display->setTextColor(color); // Use the provided color
@@ -264,17 +262,7 @@ void ScatterPlot::add_refresh_timestamp()
     
     drawString(x, h/2, strftime_buf, NULL, EPD_BLACK); // Use NULL font for default
 
-    int mv = analogReadMilliVolts(BATTERY_ADC_PIN);
-    float battery_voltage = (mv / 1000.0) * 2;
-
-    if (battery_voltage >= 4.2)
-    {
-        battery_voltage = 4.2;
-    }
-    char buffer[32];
-    sprintf(buffer, "Battery: %.2fV", battery_voltage);
-    display->getTextBounds(buffer, x, y, &x1, &y1, &w, &h);
-    drawString(EPD_WIDTH - w - MARGIN_RIGHT , h *3/2+4, buffer, NULL, EPD_BLACK); // Use NULL font
+    
 }
 
 void ScatterPlot::drawDashedLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1, uint16_t color, uint16_t dashLength, uint16_t spaceLength)

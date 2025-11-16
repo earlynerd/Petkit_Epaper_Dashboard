@@ -84,6 +84,7 @@ private:
     void drawLegend();
     void drawPatternRect(int16_t x, int16_t y, int16_t w, int16_t h);
     void drawHatchRect(int16_t x, int16_t y, int16_t w, int16_t h);
+    void drawCheckerRect(int16_t x, int16_t y, int16_t w, int16_t h);
     Adafruit_GFX* _gfx;
     int16_t _x, _y, _w, _h; // Overall widget position and size
 
