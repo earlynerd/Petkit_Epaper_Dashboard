@@ -103,7 +103,11 @@ void Histogram::processData()
         // Find the max frequency for *this* series
         if (!s.bins.empty())
         {
-            s.seriesMaxFreq = *std::max_element(s.bins.begin(), s.bins.end());
+            if (_normalize)
+            {
+                s.seriesMaxFreq =  *std::max_element(s.bins.begin(), s.bins.end()) * 100 / s.data.size();
+            }
+            else s.seriesMaxFreq = *std::max_element(s.bins.begin(), s.bins.end());
         }
 
         // Update the global max frequency (only used if not normalizing)
@@ -116,10 +120,10 @@ void Histogram::processData()
     // Now, set the axis scale
     if (_normalize)
     {
-        _maxFreq = 100; // Our Y-axis now represents 0-100%
-        // if (_yAxisLabel == nullptr) { // Set a default Y label if user hasn't
-        //_yAxisLabel = "% of Max Freq";
-        //}
+        if (_maxFreq == 0)
+            _maxFreq = 10;
+        else
+            _maxFreq = static_cast<int>(ceil(_maxFreq * 1.05f));
     }
     else
     {
@@ -127,7 +131,7 @@ void Histogram::processData()
         if (_maxFreq == 0)
             _maxFreq = 10;
         else
-            _maxFreq = static_cast<int>(ceil(_maxFreq * 1.15f));
+            _maxFreq = static_cast<int>(ceil(_maxFreq * 1.05f));
     }
 }
 
@@ -150,7 +154,7 @@ void Histogram::drawAxes()
         _gfx->setFont(&FreeSansBold12pt7b);
         _gfx->setTextSize(0);
         _gfx->getTextBounds(_title, 0, 0, &tx, &ty, &tw, &th);
-        _gfx->setCursor(_x + (_w - tw) / 2, _plotY - th/2); // Adjusted y
+        _gfx->setCursor(_x + (_w - tw) / 2, _plotY - th / 2); // Adjusted y
         _gfx->setTextColor(TEXT_COLOR);
         _gfx->print(_title);
         _gfx->setTextSize(1);
@@ -162,15 +166,17 @@ void Histogram::drawAxes()
     for (int i = 0; i <= numYTicks; ++i)
     {
         int16_t yPos = _plotY + _plotH - (i * _plotH / numYTicks);
-        if(i == 0) _gfx->drawLine(_plotX - 5, _plotY + _plotH-1, _plotX, _plotY + _plotH-1, AXIS_COLOR);
-        else _gfx->drawLine(_plotX - 5, yPos, _plotX, yPos, AXIS_COLOR);
+        if (i == 0)
+            _gfx->drawLine(_plotX - 5, _plotY + _plotH - 1, _plotX, _plotY + _plotH - 1, AXIS_COLOR);
+        else
+            _gfx->drawLine(_plotX - 5, yPos, _plotX, yPos, AXIS_COLOR);
 
         int labelVal;
         char label[10];
 
         if (_normalize)
         {
-            labelVal = static_cast<int>(ceil((i * 100.0f) / numYTicks));
+            labelVal = static_cast<int>(ceil((i * _maxFreq) / static_cast<float>(numYTicks)));
             sprintf(label, "%d%%", labelVal); // Add a percent sign
         }
         else
@@ -201,8 +207,10 @@ void Histogram::drawAxes()
     for (int i = 0; i <= numXTicks; ++i)
     {
         int16_t xPos = _plotX + (i * _plotW / numXTicks);
-        if(i == numXTicks) _gfx->drawLine(_plotX + _plotW-1, _plotY + _plotH, _plotX + _plotW-1, _plotY + _plotH + 5, AXIS_COLOR);
-        else _gfx->drawLine(xPos, _plotY + _plotH, xPos, _plotY + _plotH + 5, AXIS_COLOR);
+        if (i == numXTicks)
+            _gfx->drawLine(_plotX + _plotW - 1, _plotY + _plotH, _plotX + _plotW - 1, _plotY + _plotH + 5, AXIS_COLOR);
+        else
+            _gfx->drawLine(xPos, _plotY + _plotH, xPos, _plotY + _plotH + 5, AXIS_COLOR);
 
         float labelVal = _minVal + (i * (_maxVal - _minVal) / numXTicks);
         char label[10];
@@ -251,6 +259,7 @@ void Histogram::drawBars()
 
         for (int j = 0; j < numSeries; ++j)
         {
+
             const auto &s = _series[j];
             int16_t barH = 0;
 
@@ -259,7 +268,8 @@ void Histogram::drawBars()
                 if (s.seriesMaxFreq > 0)
                 {
                     // Calculate height as a percentage of this series's max
-                    barH = static_cast<int16_t>((static_cast<float>(s.bins[i]) / s.seriesMaxFreq) * _plotH);
+                    // barH = static_cast<int16_t>((static_cast<float>(s.bins[i]) / s.seriesMaxFreq) * _plotH);
+                    barH = static_cast<int16_t>(((static_cast<float>(s.bins[i]) / s.data.size()) * 100.0 / _maxFreq) * _plotH);
                 }
             }
             else
@@ -292,7 +302,7 @@ void Histogram::drawBars()
                     drawHatchRect(barStartX, _plotY + _plotH - barH, barWidth, barH);
                     break;
                 case EPD_BLACK:
-                    _gfx->drawRect(barStartX, _plotY + _plotH - barH, barWidth, barH, EPD_BLACK);        
+                    _gfx->drawRect(barStartX, _plotY + _plotH - barH, barWidth, barH, EPD_BLACK);
                     break;
                 }
 #endif
@@ -314,28 +324,28 @@ void Histogram::drawLegend()
 
     for (const auto &s : _series)
     {
-        #if(EPD_SELECT == 1002)
+#if (EPD_SELECT == 1002)
         _gfx->fillRect(legendX, legendY, markerW, markerH, s.color);
-        #elif(EPD_SELECT == 1001)
+#elif (EPD_SELECT == 1001)
         switch (s.color)
-                {
-                case EPD_RED:
-                    _gfx->fillRect(legendX, legendY, markerW, markerH, EPD_BLACK);
-                    break;
-                case EPD_BLUE:
-                    drawCheckerRect(legendX, legendY, markerW, markerH);    
-                    break;
-                case EPD_GREEN:
-                    drawPatternRect(legendX, legendY, markerW, markerH);
-                    break;
-                case EPD_YELLOW:
-                    drawHatchRect(legendX, legendY, markerW, markerH);
-                    break;
-                case EPD_BLACK:
-                    _gfx->drawRect(legendX, legendY, markerW, markerH, EPD_BLACK);        
-                    break;
-                }
-        #endif
+        {
+        case EPD_RED:
+            _gfx->fillRect(legendX, legendY, markerW, markerH, EPD_BLACK);
+            break;
+        case EPD_BLUE:
+            drawCheckerRect(legendX, legendY, markerW, markerH);
+            break;
+        case EPD_GREEN:
+            drawPatternRect(legendX, legendY, markerW, markerH);
+            break;
+        case EPD_YELLOW:
+            drawHatchRect(legendX, legendY, markerW, markerH);
+            break;
+        case EPD_BLACK:
+            _gfx->drawRect(legendX, legendY, markerW, markerH, EPD_BLACK);
+            break;
+        }
+#endif
         _gfx->setTextColor(TEXT_COLOR);
         _gfx->setCursor(legendX + markerW + 5, legendY + markerH / 2 - 4);
         _gfx->print(s.name);
@@ -362,10 +372,10 @@ void Histogram::drawPatternRect(int16_t x, int16_t y, int16_t w, int16_t h)
 
         // Calculate the start point (bottom-left of the line segment)
         int16_t x1_rel = std::max(0, k - h);
-        int16_t y1_rel = k - x1_rel -1;
+        int16_t y1_rel = k - x1_rel - 1;
 
         // Calculate the end point (top-right of the line segment)
-        int16_t x2_rel = std::min(w, k) -1;
+        int16_t x2_rel = std::min(w, k) - 1;
         int16_t y2_rel = k - x2_rel;
 
         // Convert relative coordinates to absolute screen coordinates and draw the line.
@@ -388,10 +398,10 @@ void Histogram::drawHatchRect(int16_t x, int16_t y, int16_t w, int16_t h)
 
         // Calculate the start point (bottom-left of the line segment)
         int16_t x1_rel = std::max(0, k - h);
-        int16_t y1_rel = k - x1_rel-1;
+        int16_t y1_rel = k - x1_rel - 1;
 
         // Calculate the end point (top-right of the line segment)
-        int16_t x2_rel = std::min(w, k)-1;
+        int16_t x2_rel = std::min(w, k) - 1;
         int16_t y2_rel = k - x2_rel;
 
         // Convert relative coordinates to absolute screen coordinates and draw the line.
@@ -402,11 +412,12 @@ void Histogram::drawHatchRect(int16_t x, int16_t y, int16_t w, int16_t h)
 void Histogram::drawCheckerRect(int16_t x, int16_t y, int16_t w, int16_t h)
 {
     bool checker = false;
-    for(int y1 = y; y1 < y+h; y1++ )
+    for (int y1 = y; y1 < y + h; y1++)
     {
-        for(int x1 = x; x1 < x + w; x1++)
+        for (int x1 = x; x1 < x + w; x1++)
         {
-            if(checker ^ ((x1-x)%2)) _gfx->drawPixel(x1, y1, EPD_BLACK);
+            if (checker ^ ((x1 - x) % 2))
+                _gfx->drawPixel(x1, y1, EPD_BLACK);
         }
         checker = !checker;
     }

@@ -208,16 +208,16 @@ void ScatterPlot::drawMarker(int x, int y, uint16_t color)
     #if (EPD_SELECT == 1002)
         // You could customize this to draw different markers based on series index
         // For now, all series use a filled circle
-        display->fillCircle(x, y, 2, color);
+        display->fillCircle(x, y, 3, color);
         
     #elif (EPD_SELECT == 1001)
         switch(color)
         {
             case EPD_RED:
-                display->fillCircle(x, y, 2, EPD_BLACK);
+                display->fillCircle(x, y, 3, EPD_BLACK);
             break;
             case EPD_BLUE:
-                display->drawCircle(x, y, 2, EPD_BLACK);
+                display->drawCircle(x, y, 3, EPD_BLACK);
             break;
             case EPD_GREEN:
                 display->drawRect(x-1, y+1, 4, 4, EPD_BLACK);
