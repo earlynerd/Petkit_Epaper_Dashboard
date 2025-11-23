@@ -133,7 +133,7 @@ void ScatterPlot::drawAxes(float xMin, float xMax, float yMin, float yMax)
     for (int i = numXTicks; i >=0; --i)
     {
         time_t tickTime = midnight - (time_t)((float)i * seconds_per_xtick);
-        DataPoint tickpoint = {tickTime, 0 };
+        DataPoint tickpoint = {(float)tickTime, 0.0 };
         int xPos, yPos;
         mapPoint(tickpoint, xPos, yPos, xMin, xMax, yMin, yMax);
         if((xPos < plotAreaX) || (xPos > plotAreaX + plotAreaWidth)) continue;

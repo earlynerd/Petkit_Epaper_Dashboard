@@ -9,15 +9,12 @@
 #include "WiFiProvisioner.h"
 #include "PetKitApi.h"
 #include "config.h"
-
-
+#include "RTClib.h"
 #if (EPD_SELECT == 1002)
 #include <GxEPD2_7C.h>
 #elif (EPD_SELECT == 1001)
 #include <GxEPD2_BW.h>
 #endif
-#include "RTClib.h"
-
 class NetworkManager {
 public:
     NetworkManager(Preferences& prefs);

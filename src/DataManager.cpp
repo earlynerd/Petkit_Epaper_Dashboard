@@ -89,6 +89,53 @@ void DataManager::saveData(const PetDataMap &petData) {
     }
 }
 
+void DataManager::saveStatus(const StatusRecord &status) {
+    JsonDocument doc; 
+    JsonObject root = doc.to<JsonObject>();
+    root["box_full"] = status.box_full;
+    root["device_name"] = status.device_name;
+    root["device_type"] = status.device_type;
+    root["litter_percent"] = status.litter_percent;
+    root["sand_lack"] = status.sand_lack;
+    root["timestamp"] = status.timestamp;
+
+    File file = SD.open(_status_filename, FILE_WRITE);
+    if (file) {
+        serializeJson(doc, file);
+        file.close();
+        Serial.println("[DataManager] Status saved to SD.");
+    }
+}
+
+ StatusRecord DataManager::getStatus()
+ {
+    StatusRecord s;
+    if (!SD.exists(_status_filename)) {
+        Serial.println("[DataManager] No Status file found.");
+        return s;
+    }
+
+    File file = SD.open(_status_filename, FILE_READ);
+    if (!file) return s;
+
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, file);
+    file.close();
+    if (error) {
+        Serial.print("[DataManager] Status JSON Parse Error: ");
+        Serial.println(error.c_str());
+        return s;
+    }
+    
+    JsonObject root = doc.as<JsonObject>();
+    s.box_full = root["box_full"];
+    s.device_type = root["device_name"].as<String>();
+    s.litter_percent = root["litter_percent"]; 
+    s.sand_lack = root["sand_lack"];
+    s.timestamp = root["timestamp"];
+    return s;
+ }
+
 void DataManager::mergeData(PetDataMap &mainData, int petId, const std::vector<LitterboxRecord> &newRecords) {
     for (const auto &record : newRecords) {
         mainData[petId][record.timestamp] = record;

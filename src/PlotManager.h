@@ -12,7 +12,8 @@ public:
     
     void renderDashboard(const std::vector<Pet> &pets, 
                          PetDataMap &allPetData, 
-                         const DateRangeInfo &range);
+                         const DateRangeInfo &range,
+                         const StatusRecord &status);
 
 private:
     GxEPD2_DISPLAY_CLASS<GxEPD2_DRIVER_CLASS, MAX_HEIGHT(GxEPD2_DRIVER_CLASS)> *_display;

@@ -99,7 +99,7 @@ void setup()
   // Pass the global 'hspi' to the data manager
   dataManager.begin(hspi);
   dataManager.loadData(allPetData);
-
+  StatusRecord status;
   int rangeIndex = preferences.getInt(NVS_PLOT_RANGE_KEY, 0);
 
   if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1)
@@ -166,6 +166,11 @@ void setup()
           dataManager.mergeData(allPetData, pet.id, records);
         }
         dataManager.saveData(allPetData);
+        status = networkManager->getApi()->getLatestStatus();
+        if (status.device_name.length() > 0)
+        {
+          dataManager.saveStatus(status);
+        }
       }
     }
   }
@@ -179,23 +184,11 @@ void setup()
       allPets.resize(len / sizeof(Pet));
       preferences.getBytes(NVS_PETS_KEY, allPets.data(), len);
     }
+    status = dataManager.getStatus();
   }
 
   // 3. Render
-  plotManager->renderDashboard(allPets, allPetData, dateRangeInfo[rangeIndex]);
-
-  // Draw Status Bar (Battery, etc) - manual draw for now to keep PlotManager clean
-  // (You can move this to PlotManager later if desired)
-  int mv = analogReadMilliVolts(BATTERY_ADC_PIN);
-  float battery_voltage = (mv / 1000.0) * 2;
-  if (battery_voltage > 4.2)
-    battery_voltage = 4.2;
-
-  display->setFont(NULL);
-  display->setTextSize(1);
-  display->setTextColor(GxEPD_BLACK);
-  display->setCursor(display->width() - 100, display->height() - 10);
-  display->printf("Bat: %.2fV", battery_voltage);
+  plotManager->renderDashboard(allPets, allPetData, dateRangeInfo[rangeIndex], status);
 
   display->display();
   display->hibernate();
@@ -213,4 +206,3 @@ void setup()
 }
 
 void loop() {}
-

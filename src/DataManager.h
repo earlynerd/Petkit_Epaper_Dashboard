@@ -22,6 +22,12 @@ public:
     // Save the provided map to SD, pruning old data
     void saveData(const PetDataMap &petData);
     
+    //save latest status for display on plot
+    void saveStatus(const StatusRecord &status);
+
+    //fetch sotred status info from SD card
+    StatusRecord getStatus();
+
     // Merge new records from API into the main map
     void mergeData(PetDataMap &mainData, int petId, const std::vector<LitterboxRecord> &newRecords);
 
@@ -30,6 +36,7 @@ public:
 
 private:
     const char* _filename = "/pet_data.json";
+    const char* _status_filename = "/status.json";
 };
 
 #endif
