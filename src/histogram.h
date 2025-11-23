@@ -14,6 +14,7 @@
         std::vector<float> data;
         std::vector<int> bins;
         uint16_t color;
+        uint16_t backcolor;
         int seriesMaxFreq = 0; // Max frequency for this specific series
     };
 
@@ -59,7 +60,7 @@ public:
      * @param data A vector of floats for the data series.
      * @param color The color to use for this series' bars.
      */
-    void addSeries(const char* name, const std::vector<float>& data, uint16_t color);
+    void addSeries(const char* name, const std::vector<float>& data, uint16_t color, uint16_t background);
 
     /**
      * @brief Enable or disable normalization.
@@ -82,9 +83,9 @@ private:
     void drawAxes();
     void drawBars();
     void drawLegend();
-    void drawPatternRect(int16_t x, int16_t y, int16_t w, int16_t h);
-    void drawHatchRect(int16_t x, int16_t y, int16_t w, int16_t h);
-    void drawCheckerRect(int16_t x, int16_t y, int16_t w, int16_t h);
+    void drawPatternRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color1, uint16_t color2);
+    void drawHatchRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color1, uint16_t color2);
+    void drawCheckerRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color1, uint16_t color2);
     Adafruit_GFX* _gfx;
     int16_t _x, _y, _w, _h; // Overall widget position and size
 
@@ -95,7 +96,7 @@ private:
     const char* _xAxisLabel = nullptr;
     const char* _yAxisLabel = nullptr;
 
-    int _numBins = 10;
+    int _numBins = 20;
     std::vector<HistogramSeries> _series; // Use a vector of series
 
     float _minVal = 0.0f;
@@ -105,10 +106,10 @@ private:
     bool _normalize = false; // Normalization flag
 
     // Constants for layout and styling
-    const int PADDING_TOP = 30;
-    const int PADDING_BOTTOM = 20;
-    const int PADDING_LEFT = 35;
-    const int PADDING_RIGHT = 20; 
+    const int PADDING_TOP = 20;
+    const int PADDING_BOTTOM = 15;
+    const int PADDING_LEFT = 29;
+    const int PADDING_RIGHT = 15; 
     const uint16_t AXIS_COLOR = GxEPD_BLACK;
     const uint16_t TEXT_COLOR = GxEPD_BLACK;
 };

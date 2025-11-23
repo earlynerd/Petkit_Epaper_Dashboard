@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <Fonts/FreeSansBold12pt7b.h>
+#include <Fonts/FreeSansBold9pt7b.h>
 
 Histogram::Histogram(Adafruit_GFX *gfx, int16_t x, int16_t y, int16_t w, int16_t h)
     : _gfx(gfx), _x(x), _y(y), _w(w), _h(h) {}
@@ -12,7 +13,7 @@ void Histogram::setXAxisLabel(const char *label) { _xAxisLabel = label; }
 void Histogram::setYAxisLabel(const char *label) { _yAxisLabel = label; }
 void Histogram::setBinCount(int bins) { _numBins = bins > 0 ? bins : 1; }
 
-void Histogram::addSeries(const char *name, const std::vector<float> &data, uint16_t color)
+void Histogram::addSeries(const char *name, const std::vector<float> &data, uint16_t color, uint16_t background)
 {
     // Add a new series to our vector, initializing seriesMaxFreq to 0
     HistogramSeries newSeries;
@@ -21,7 +22,7 @@ void Histogram::addSeries(const char *name, const std::vector<float> &data, uint
     newSeries.bins = std::vector<int>(); // Explicitly create empty vector
     newSeries.color = color;
     newSeries.seriesMaxFreq = 0;
-
+    newSeries.backcolor = background;
     _series.push_back(newSeries);
 }
 
@@ -151,10 +152,10 @@ void Histogram::drawAxes()
     {
         int16_t tx, ty;
         uint16_t tw, th;
-        _gfx->setFont(&FreeSansBold12pt7b);
+        _gfx->setFont(&FreeSansBold9pt7b);
         _gfx->setTextSize(0);
         _gfx->getTextBounds(_title, 0, 0, &tx, &ty, &tw, &th);
-        _gfx->setCursor(_x + (_w - tw) / 2, _plotY - th / 2); // Adjusted y
+        _gfx->setCursor(_x + (_w - tw) / 2, _plotY - th / 2 + 2); // Adjusted y
         _gfx->setTextColor(TEXT_COLOR);
         _gfx->print(_title);
         _gfx->setTextSize(1);
@@ -244,10 +245,11 @@ void Histogram::drawBars()
         return; // Nothing to draw
 
     int numSeries = _series.size();
-    float barSlotWidth = static_cast<float>(_plotW) / _numBins;
-    float barPadding = barSlotWidth * 0.1f;                   // 10% of the slot on each side is padding
+    float barSlotWidth = (float)_plotW / (float)_numBins;
+    //float barPadding = barSlotWidth * 0.1f;                   // 10% of the slot on each side is padding
+    float barPadding = 2;
     float drawableBarWidth = barSlotWidth - (2 * barPadding); // The total width for the bar(s) in a slot
-    float barWidth = floor(drawableBarWidth / numSeries);     // Width of a single bar
+    float barWidth = round(drawableBarWidth / numSeries);     // Width of a single bar
 
     if (barWidth < 1)
         barWidth = 1;
@@ -285,7 +287,8 @@ void Histogram::drawBars()
             {
                 int16_t barStartX = binStartX + (j * barWidth);
 #if (EPD_SELECT == 1002)
-                _gfx->fillRect(barStartX, _plotY + _plotH - barH, barWidth, barH, s.color);
+                //_gfx->fillRect(barStartX, _plotY + _plotH - barH, barWidth, barH, s.color);
+                drawCheckerRect(barStartX, _plotY + _plotH - barH, barWidth, barH, s.color, s.backcolor);
 #elif (EPD_SELECT == 1001)
                 switch (s.color)
                 {
@@ -293,13 +296,13 @@ void Histogram::drawBars()
                     _gfx->fillRect(barStartX, _plotY + _plotH - barH, barWidth, barH, EPD_BLACK);
                     break;
                 case EPD_BLUE:
-                    drawCheckerRect(barStartX, _plotY + _plotH - barH, barWidth, barH);
+                    drawCheckerRect(barStartX, _plotY + _plotH - barH, barWidth, barH, EPD_BLACK, EPD_WHITE);
                     break;
                 case EPD_GREEN:
-                    drawPatternRect(barStartX, _plotY + _plotH - barH, barWidth, barH);
+                    drawPatternRect(barStartX, _plotY + _plotH - barH, barWidth, barH, EPD_BLACK, EPD_WHITE);
                     break;
                 case EPD_YELLOW:
-                    drawHatchRect(barStartX, _plotY + _plotH - barH, barWidth, barH);
+                    drawHatchRect(barStartX, _plotY + _plotH - barH, barWidth, barH, EPD_BLACK, EPD_WHITE);
                     break;
                 case EPD_BLACK:
                     _gfx->drawRect(barStartX, _plotY + _plotH - barH, barWidth, barH, EPD_BLACK);
@@ -325,7 +328,8 @@ void Histogram::drawLegend()
     for (const auto &s : _series)
     {
 #if (EPD_SELECT == 1002)
-        _gfx->fillRect(legendX, legendY, markerW, markerH, s.color);
+        //_gfx->fillRect(legendX, legendY, markerW, markerH, s.color);
+        drawCheckerRect(legendX, legendY, markerW, markerH, s.color, s.backcolor);
 #elif (EPD_SELECT == 1001)
         switch (s.color)
         {
@@ -333,13 +337,13 @@ void Histogram::drawLegend()
             _gfx->fillRect(legendX, legendY, markerW, markerH, EPD_BLACK);
             break;
         case EPD_BLUE:
-            drawCheckerRect(legendX, legendY, markerW, markerH);
+            drawCheckerRect(legendX, legendY, markerW, markerH, EPD_BLACK, EPD_WHITE);
             break;
         case EPD_GREEN:
-            drawPatternRect(legendX, legendY, markerW, markerH);
+            drawPatternRect(legendX, legendY, markerW, markerH, EPD_BLACK, EPD_WHITE);
             break;
         case EPD_YELLOW:
-            drawHatchRect(legendX, legendY, markerW, markerH);
+            drawHatchRect(legendX, legendY, markerW, markerH, EPD_BLACK, EPD_WHITE);
             break;
         case EPD_BLACK:
             _gfx->drawRect(legendX, legendY, markerW, markerH, EPD_BLACK);
@@ -357,9 +361,10 @@ void Histogram::drawLegend()
     }
 }
 
-void Histogram::drawPatternRect(int16_t x, int16_t y, int16_t w, int16_t h)
+void Histogram::drawPatternRect(int16_t x, int16_t y, int16_t w, int16_t h,  uint16_t color1, uint16_t color2)
 {
-    _gfx->drawRect(x, y, w, h, EPD_BLACK);
+    _gfx->fillRect(x, y, w, h, color2);
+    _gfx->drawRect(x, y, w, h, color1);
 
     if (w <= 0 || h <= 0)
         return;
@@ -383,9 +388,10 @@ void Histogram::drawPatternRect(int16_t x, int16_t y, int16_t w, int16_t h)
     }
 }
 
-void Histogram::drawHatchRect(int16_t x, int16_t y, int16_t w, int16_t h)
+void Histogram::drawHatchRect(int16_t x, int16_t y, int16_t w, int16_t h,  uint16_t color1, uint16_t color2)
 {
-    _gfx->drawRect(x, y, w, h, EPD_BLACK);
+    _gfx->fillRect(x, y, w, h, color2);
+    _gfx->drawRect(x, y, w, h, color1);
 
     if (w <= 0 || h <= 0)
         return;
@@ -409,7 +415,7 @@ void Histogram::drawHatchRect(int16_t x, int16_t y, int16_t w, int16_t h)
     }
 }
 
-void Histogram::drawCheckerRect(int16_t x, int16_t y, int16_t w, int16_t h)
+void Histogram::drawCheckerRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color1, uint16_t color2)
 {
     bool checker = false;
     for (int y1 = y; y1 < y + h; y1++)
@@ -417,9 +423,10 @@ void Histogram::drawCheckerRect(int16_t x, int16_t y, int16_t w, int16_t h)
         for (int x1 = x; x1 < x + w; x1++)
         {
             if (checker ^ ((x1 - x) % 2))
-                _gfx->drawPixel(x1, y1, EPD_BLACK);
+                _gfx->drawPixel(x1, y1, color1);
+            else _gfx->drawPixel(x1, y1, color2);
         }
         checker = !checker;
     }
-    _gfx->drawRect(x, y, w, h, EPD_BLACK);
+    _gfx->drawRect(x, y, w, h, color1);
 }

@@ -46,7 +46,7 @@ const int BUTTON_KEY2 = 5; // KEY2 - GPIO5
 // Select the ePaper driver to use
 // 0: reTerminal E1001 (7.5'' B&W)
 // 1: reTerminal E1002 (7.3'' Color)
-#define EPD_SELECT 1001
+#define EPD_SELECT 1002
 
 #if (EPD_SELECT == 1001)
 #define GxEPD2_DISPLAY_CLASS GxEPD2_BW
@@ -67,13 +67,19 @@ const int BUTTON_KEY2 = 5; // KEY2 - GPIO5
 #define NVS_NAMESPACE "petkitplotter"
 #define NVS_TZ_KEY "timezone"
 #define NVS_PLOT_TYPE_KEY "plottype"
-
+#define NVS_PLOT_RANGE_KEY "plotrange"
+#define NVS_PETS_KEY    "pets"
 #define NVS_SSID_KEY "ssid"
 #define NVS_WIFI_PASS_KEY "pass"
 #define NVS_PETKIT_USER_KEY "petkitusername"
 #define NVS_PETKIT_PASS_KEY "petkitpassword"
 #define NVS_PETKIT_REGION_KEY "petkitregion"
 #define NVS_PETKIT_TIMEZONE_KEY "petkittimezone"
+
+// Bitmasks for ESP32 EXT1 wakeup
+#define BUTTON_KEY0_MASK (1ULL << BUTTON_KEY0)
+#define BUTTON_KEY1_MASK (1ULL << BUTTON_KEY1)
+#define BUTTON_KEY2_MASK (1ULL << BUTTON_KEY2)
 
 #define WIFI_TIMEOUT 20000
 
