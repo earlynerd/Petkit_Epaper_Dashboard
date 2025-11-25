@@ -6,13 +6,12 @@
 #include "PlotManager.h"
 #include "RTClib.h"
 #include "Adafruit_SHT4x.h"
+
 // Globals
 GxEPD2_DISPLAY_CLASS<GxEPD2_DRIVER_CLASS, MAX_HEIGHT(GxEPD2_DRIVER_CLASS)> *display;
 RTC_PCF8563 rtc;
 Preferences preferences;
 Adafruit_SHT4x sht4 = Adafruit_SHT4x();
-// Define SPI globally so it persists for the lifetime of the program
-// This fixes the crash where Display tried to access a destroyed SPI object
 SPIClass hspi(HSPI);
 
 DataManager dataManager;
@@ -43,9 +42,9 @@ void initHardware()
   pinMode(EPD_DC_PIN, OUTPUT);
   pinMode(EPD_CS_PIN, OUTPUT);
 
-  pinMode(BUTTON_KEY0, INPUT_PULLUP);
-  pinMode(BUTTON_KEY1, INPUT_PULLUP);
-  pinMode(BUTTON_KEY2, INPUT_PULLUP);
+  pinMode(BUTTON_KEY0, INPUT_PULLUP);     //refresh
+  pinMode(BUTTON_KEY1, INPUT_PULLUP);     //date range ++
+  pinMode(BUTTON_KEY2, INPUT_PULLUP);     //date range --
 
   pinMode(SD_EN_PIN, OUTPUT);
   digitalWrite(SD_EN_PIN, HIGH);
@@ -75,16 +74,6 @@ void initHardware()
 
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
-
-  // Setup Battery Monitoring
-  pinMode(BATTERY_ENABLE_PIN, OUTPUT);
-  digitalWrite(BATTERY_ENABLE_PIN, HIGH);
-  analogReadResolution(12);
-  analogSetPinAttenuation(BATTERY_ADC_PIN, ADC_11db);
-
-  pinMode(BUTTON_KEY0, INPUT_PULLUP);
-  pinMode(BUTTON_KEY1, INPUT_PULLUP);
-  pinMode(BUTTON_KEY2, INPUT_PULLUP);
 }
 
 void setup()
@@ -95,8 +84,7 @@ void setup()
   networkManager = new NetworkManager(preferences);
   plotManager = new PlotManager(display);
 
-  // 1. Load Local Data using the Shared SPI
-  // Pass the global 'hspi' to the data manager
+  // 1. Load Local Data from Micro SD
   dataManager.begin(hspi);
   dataManager.loadData(allPetData);
   StatusRecord status;
@@ -121,7 +109,11 @@ void setup()
   }
 
   bool isViewUpdate = (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1);
-
+  if(isViewUpdate)
+  {
+    uint64_t wakeup_pins = esp_sleep_get_ext1_wakeup_status();
+    if(wakeup_pins & BUTTON_KEY0_MASK) isViewUpdate = false;    //Key0 is the refresh button
+  } 
   if (!isViewUpdate)
   {
     networkManager->connectOrProvision(display);
@@ -130,8 +122,6 @@ void setup()
 
     if (networkManager->initPetKitApi())
     {
-
-      // --- RESTORED LOGIC START ---
       // Calculate how many days we are missing
       int daysToFetch = 30; // Default max
 
@@ -147,7 +137,6 @@ void setup()
         daysToFetch = std::min(std::max(daysDifference, 1), 30);
       }
       Serial.printf("Requesting %d days of data from PetKit.\r\n", daysToFetch);
-      // --- RESTORED LOGIC END ---
 
       if (networkManager->getApi()->fetchAllData(daysToFetch))
       {
@@ -158,7 +147,6 @@ void setup()
         {
           preferences.putBytes(NVS_PETS_KEY, allPets.data(), allPets.size() * sizeof(Pet));
         }
-
         // Merge data
         for (const auto &pet : allPets)
         {
@@ -176,7 +164,7 @@ void setup()
   }
   else
   {
-    // If we are just updating the view (button press), try to load pets from NVS
+    // If we are just updating the view (button1 or 2 press), try to load pets from NVS
     // so we have names for the charts without needing WiFi
     size_t len = preferences.getBytesLength(NVS_PETS_KEY);
     if (len > 0)

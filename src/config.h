@@ -46,7 +46,7 @@ const int BUTTON_KEY2 = 5; // KEY2 - GPIO5
 // Select the ePaper driver to use
 // 0: reTerminal E1001 (7.5'' B&W)
 // 1: reTerminal E1002 (7.3'' Color)
-#define EPD_SELECT 1001
+#define EPD_SELECT 1002
 
 #if (EPD_SELECT == 1001)
 #define GxEPD2_DISPLAY_CLASS GxEPD2_BW

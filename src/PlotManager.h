@@ -24,7 +24,7 @@ private:
         uint16_t background;
     };
     const std::vector<ColorPair> _petColors = {
-        {EPD_RED, EPD_YELLOW}, {EPD_BLUE, EPD_BLUE}, 
+        {EPD_RED, EPD_YELLOW}, {EPD_BLUE, EPD_BLACK}, 
         {EPD_GREEN, EPD_YELLOW}, {EPD_BLACK, EPD_WHITE}
     };
 };
