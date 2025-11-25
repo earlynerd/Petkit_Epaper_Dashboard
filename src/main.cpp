@@ -42,9 +42,9 @@ void initHardware()
   pinMode(EPD_DC_PIN, OUTPUT);
   pinMode(EPD_CS_PIN, OUTPUT);
 
-  pinMode(BUTTON_KEY0, INPUT_PULLUP);     //refresh
-  pinMode(BUTTON_KEY1, INPUT_PULLUP);     //date range ++
-  pinMode(BUTTON_KEY2, INPUT_PULLUP);     //date range --
+  pinMode(BUTTON_KEY0, INPUT_PULLUP); // refresh
+  pinMode(BUTTON_KEY1, INPUT_PULLUP); // date range ++
+  pinMode(BUTTON_KEY2, INPUT_PULLUP); // date range --
 
   pinMode(SD_EN_PIN, OUTPUT);
   digitalWrite(SD_EN_PIN, HIGH);
@@ -62,6 +62,11 @@ void initHardware()
   {
     Serial.println("Couldn't find SHT4x");
   }
+  else
+  {
+    sht4.setPrecision(SHT4X_HIGH_PRECISION);
+    sht4.setHeater(SHT4X_NO_HEATER);
+  }
 
   // Initialize the Global SPI instance
   hspi.begin(EPD_SCK_PIN, SD_MISO_PIN, EPD_MOSI_PIN, -1);
@@ -76,10 +81,29 @@ void initHardware()
   digitalWrite(LED_PIN, LOW);
 }
 
+void checkFactoryReset() {
+  // If Key 1 and Key 2 are held down at boot, wipe credentials
+  if (digitalRead(BUTTON_KEY1) == LOW && digitalRead(BUTTON_KEY2) == LOW) {
+      Serial.println("Factory Reset Triggered!");
+      display->fillScreen(GxEPD_WHITE);
+      display->setCursor(10, 50);
+      display->setTextColor(GxEPD_BLACK);
+      display->setTextSize(2);
+      display->print("Factory Reset...");
+      display->display();
+      
+      preferences.clear(); // Wipe NVS
+      delay(2000);
+      ESP.restart();
+  }
+}
+
 void setup()
 {
   initHardware();
   preferences.begin(NVS_NAMESPACE);
+
+  checkFactoryReset();
 
   networkManager = new NetworkManager(preferences);
   plotManager = new PlotManager(display);
@@ -87,9 +111,16 @@ void setup()
   // 1. Load Local Data from Micro SD
   dataManager.begin(hspi);
   dataManager.loadData(allPetData);
-  StatusRecord status;
-  int rangeIndex = preferences.getInt(NVS_PLOT_RANGE_KEY, 0);
 
+  StatusRecord status = dataManager.getStatus();
+
+  sensors_event_t humidity, temp;
+  sht4.getEvent(&humidity, &temp);
+  float currentTemp = temp.temperature;
+  float currentHumid = humidity.relative_humidity;
+
+  int rangeIndex = preferences.getInt(NVS_PLOT_RANGE_KEY, 0);
+  rtc.begin();
   if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1)
   {
     uint64_t wakeup_pins = esp_sleep_get_ext1_wakeup_status();
@@ -109,19 +140,24 @@ void setup()
   }
 
   bool isViewUpdate = (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1);
-  if(isViewUpdate)
+  if (isViewUpdate)
   {
     uint64_t wakeup_pins = esp_sleep_get_ext1_wakeup_status();
-    if(wakeup_pins & BUTTON_KEY0_MASK) isViewUpdate = false;    //Key0 is the refresh button
-  } 
+    if (wakeup_pins & BUTTON_KEY0_MASK)
+      isViewUpdate = false; // Key0 is the refresh button
+  }
+
+  bool wifiSuccess = false;
+
   if (!isViewUpdate)
   {
     networkManager->connectOrProvision(display);
-    rtc.begin();
-    networkManager->syncTime(rtc);
-
+    
+    if(networkManager->syncTime(rtc)) wifiSuccess = true;
+    
     if (networkManager->initPetKitApi())
     {
+      //networkManager->getApi()->setDebug(true);
       // Calculate how many days we are missing
       int daysToFetch = 30; // Default max
 
@@ -140,6 +176,7 @@ void setup()
 
       if (networkManager->getApi()->fetchAllData(daysToFetch))
       {
+        
         allPets = networkManager->getApi()->getPets();
 
         // Store pets to NVS
@@ -176,14 +213,20 @@ void setup()
   }
 
   // 3. Render
-  plotManager->renderDashboard(allPets, allPetData, dateRangeInfo[rangeIndex], status);
+  plotManager->renderDashboard(allPets, allPetData, dateRangeInfo[rangeIndex], status, wifiSuccess, currentTemp, currentHumid);
 
   display->display();
   display->hibernate();
 
+  //check battery low, extend sleep duration if so
+  int mv = analogReadMilliVolts(BATTERY_ADC_PIN);
+  float battery_voltage = (mv / 1000.0) * 2;
+
   // 4. Sleep
   Serial.println("Sleeping...");
-  uint64_t sleepInterval = 1000000ull * 60ull * 60ull * 2ull; // 2hr
+  uint64_t sleepInterval;
+  if(battery_voltage < 3.50)  sleepInterval = 1000000ull * 60ull * 60ull * 6ull; // 6hr
+  else sleepInterval = 1000000ull * 60ull * 60ull * 2ull; // 2hr
   esp_sleep_enable_timer_wakeup(sleepInterval);
   // Wake up on Key 0, 1, or 2 (Low)
   esp_sleep_enable_ext1_wakeup(BUTTON_KEY0_MASK | BUTTON_KEY1_MASK | BUTTON_KEY2_MASK, ESP_EXT1_WAKEUP_ANY_LOW);

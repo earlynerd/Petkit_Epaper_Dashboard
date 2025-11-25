@@ -3,7 +3,7 @@
 PlotManager::PlotManager(GxEPD2_DISPLAY_CLASS<GxEPD2_DRIVER_CLASS, MAX_HEIGHT(GxEPD2_DRIVER_CLASS)> *disp)
     : _display(disp) {}
 
-void PlotManager::renderDashboard(const std::vector<Pet> &pets, PetDataMap &allPetData, const DateRangeInfo &range, const StatusRecord &status)
+void PlotManager::renderDashboard(const std::vector<Pet> &pets, PetDataMap &allPetData, const DateRangeInfo &range, const StatusRecord &status, bool wifiSuccess, float temp, float humidity)
 {
     _display->fillScreen(GxEPD_WHITE);
 
@@ -79,6 +79,7 @@ void PlotManager::renderDashboard(const std::vector<Pet> &pets, PetDataMap &allP
     }
     plot.draw();
 
+    // --- Status Bar ---
     int mv = analogReadMilliVolts(BATTERY_ADC_PIN);
     float battery_voltage = (mv / 1000.0) * 2;
     int16_t x = 0, y = 0, x1 = 0, y1 = 0;
@@ -88,6 +89,8 @@ void PlotManager::renderDashboard(const std::vector<Pet> &pets, PetDataMap &allP
         battery_voltage = 4.2;
     }
     char buffer[32];
+    
+    // Draw Battery
     sprintf(buffer, "Battery: %.2fV", battery_voltage);
     _display->getTextBounds(buffer, x, y, &x1, &y1, &w, &h);
     x = EPD_WIDTH - w - 15;
@@ -98,7 +101,7 @@ void PlotManager::renderDashboard(const std::vector<Pet> &pets, PetDataMap &allP
     _display->setCursor(x, y);
     _display->print(buffer);
 
-
+    // Draw Update Time
     struct tm timeinfo;
     char strftime_buf[64]; // Buffer to hold the formatted string
 

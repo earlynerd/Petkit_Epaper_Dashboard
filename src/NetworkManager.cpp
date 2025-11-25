@@ -55,7 +55,7 @@ void NetworkManager::connectOrProvision(GxEPD2_DISPLAY_CLASS<GxEPD2_DRIVER_CLASS
 }
 
 bool NetworkManager::syncTime(RTC_PCF8563& rtc) {
-    // 1. Try to load saved Timezone from NVS
+    //Try to load saved Timezone from NVS
     String storedTZ = _prefs.getString(NVS_TZ_KEY, "");
     if (storedTZ.length() > 0) {
         strncpy(_time_zone, storedTZ.c_str(), sizeof(_time_zone) - 1);
@@ -74,7 +74,7 @@ bool NetworkManager::getTimezoneAndSync(RTC_PCF8563& rtc) {
     client.setCACert(root_ca_worldtimeapi);
     HTTPClient http;
     
-    // 2. If we don't have a timezone yet, fetch it from WorldTimeAPI
+    //If we don't have a timezone yet, fetch it from WorldTimeAPI
     if (strlen(_time_zone) == 0) {
         bool tz_success = false;
         for (int i = 0; i < 3; ++i) { // Retry up to 3 times
@@ -114,7 +114,7 @@ bool NetworkManager::getTimezoneAndSync(RTC_PCF8563& rtc) {
         }
     }
 
-    // 3. Now perform the actual NTP Sync
+    //Now perform the actual NTP Sync
     configTzTime(_time_zone, NTP_SERVER_1, NTP_SERVER_2);
     
     struct tm timeinfo;

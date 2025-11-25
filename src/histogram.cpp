@@ -40,17 +40,14 @@ void Histogram::plot()
         return;
     }
 
-    // 1. Pre-process data to find ranges and frequencies
+    //Pre-process data to find ranges and frequencies
     processData();
 
-    // 3. Draw the histogram bars
+    //Draw the histogram bars
     drawBars();
 
-    // 2. Draw the chart framework
+    //Draw the chart framework
     drawAxes();
-
-    // 4. Draw legend
-    // drawLegend();
 }
 
 void Histogram::processData()
@@ -104,9 +101,14 @@ void Histogram::processData()
         // Find the max frequency for *this* series
         if (!s.bins.empty())
         {
+            float maxBin = (float)*std::max_element(s.bins.begin(), s.bins.end());
             if (_normalize)
             {
-                s.seriesMaxFreq =  *std::max_element(s.bins.begin(), s.bins.end()) * 100 / s.data.size();
+                if (s.data.size() > 0) {
+                    s.seriesMaxFreq = (int)((maxBin * 100.0f) / s.data.size());
+                } else {
+                    s.seriesMaxFreq = 0;
+                }
             }
             else s.seriesMaxFreq = *std::max_element(s.bins.begin(), s.bins.end());
         }
@@ -214,7 +216,7 @@ void Histogram::drawAxes()
             _gfx->drawLine(xPos, _plotY + _plotH, xPos, _plotY + _plotH + 5, AXIS_COLOR);
 
         float labelVal = _minVal + (i * (_maxVal - _minVal) / numXTicks);
-        char label[10];
+        char label[32];
         dtostrf(labelVal, 4, 1, label);
 
         int16_t tx, ty;
@@ -270,8 +272,10 @@ void Histogram::drawBars()
                 if (s.seriesMaxFreq > 0)
                 {
                     // Calculate height as a percentage of this series's max
-                    // barH = static_cast<int16_t>((static_cast<float>(s.bins[i]) / s.seriesMaxFreq) * _plotH);
-                    barH = static_cast<int16_t>(((static_cast<float>(s.bins[i]) / s.data.size()) * 100.0 / _maxFreq) * _plotH);
+                    if (s.data.size() > 0) {
+                        float freq = (static_cast<float>(s.bins[i]) / s.data.size()) * 100.0;
+                         barH = static_cast<int16_t>((freq / _maxFreq) * _plotH);
+                    }
                 }
             }
             else

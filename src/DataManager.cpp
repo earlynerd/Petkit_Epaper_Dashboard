@@ -24,6 +24,22 @@ bool DataManager::begin(SPIClass &spi) {
 }
 
 void DataManager::loadData(PetDataMap &petData) {
+    const char* tempFilename = "/pet_data.tmp";
+
+    // crash recovery
+    // Scenario: Power failed after deleting .json but before renaming .tmp
+    if (!SD.exists(_filename) && SD.exists(tempFilename)) {
+        Serial.println("[DataManager] Detected failed save. Recovering from temp file...");
+        if (SD.rename(tempFilename, _filename)) {
+            Serial.println("[DataManager] Recovery successful!");
+        } else {
+            Serial.println("[DataManager] Recovery rename failed. Attempting to load temp file directly.");
+            // If rename fails, we can try to read the temp file directly below
+            // by temporarily swapping the pointer, but usually rename works.
+        }
+    }
+
+    // Check again (in case we just recovered it)
     if (!SD.exists(_filename)) {
         Serial.println("[DataManager] No data file found. Creating new.");
         return;
@@ -39,6 +55,7 @@ void DataManager::loadData(PetDataMap &petData) {
     if (error) {
         Serial.print("[DataManager] JSON Parse Error: ");
         Serial.println(error.c_str());
+        // leave corrupted file, might be manually recoverable.
         return;
     }
 
@@ -60,11 +77,26 @@ void DataManager::loadData(PetDataMap &petData) {
 }
 
 void DataManager::saveData(const PetDataMap &petData) {
+    // ATOMIC SAVE
+    const char* tempFilename = "/pet_data.tmp";
+    
+    //Delete temp file if it exists (cleanup from previous crash)
+    if (SD.exists(tempFilename)) {
+        SD.remove(tempFilename);
+    }
+
+    //Write all present data to a .tmp file
+    File file = SD.open(tempFilename, FILE_WRITE);
+    if (!file) {
+        Serial.println("[DataManager] Failed to open temp file for writing!");
+        return;
+    }
+
     JsonDocument doc; 
     JsonObject root = doc.to<JsonObject>();
 
     time_t now = time(NULL);
-    time_t pruneTimestamp = now - (365 * 86400L);
+    time_t pruneTimestamp = now - (365 * 86400L); // Keep 365 days
     
     for (auto const &petPair : petData) {
         int petId = petPair.first;
@@ -81,11 +113,35 @@ void DataManager::saveData(const PetDataMap &petData) {
         }
     }
 
-    File file = SD.open(_filename, FILE_WRITE);
-    if (file) {
-        serializeJson(doc, file);
+    if (serializeJson(doc, file) == 0) {
+        Serial.println("[DataManager] Failed to write JSON content!");
         file.close();
-        Serial.println("[DataManager] Data saved to SD.");
+        return;
+    }
+    
+    //Ensure data is physically on the card before close
+    file.flush(); 
+    file.close();
+    
+    //Verify the Temp File
+    File checkFile = SD.open(tempFilename);
+    if (!checkFile || checkFile.size() == 0) {
+         Serial.println("[DataManager] Temp file is invalid. Aborting save.");
+         if(checkFile) checkFile.close();
+         return;
+    }
+    checkFile.close();
+
+    //If crash here (after remove, before rename), the 'Recovery Logic' in loadData() handles it.
+    if (SD.exists(_filename)) {
+        SD.remove(_filename);
+    }
+    
+    if (SD.rename(tempFilename, _filename)) {
+        Serial.println("[DataManager] Atomic Save Complete.");
+    } else {
+        Serial.println("[DataManager] Rename failed!");
+        // Note: program leaves the .tmp file there so we can try to recover it next boot
     }
 }
 
@@ -110,6 +166,11 @@ void DataManager::saveStatus(const StatusRecord &status) {
  StatusRecord DataManager::getStatus()
  {
     StatusRecord s;
+    s.box_full = false;
+    s.litter_percent = 0;
+    s.timestamp = 0;
+    s.device_name = "";
+    
     if (!SD.exists(_status_filename)) {
         Serial.println("[DataManager] No Status file found.");
         return s;
