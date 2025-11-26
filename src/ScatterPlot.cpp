@@ -105,7 +105,7 @@ void ScatterPlot::drawAxes(float xMin, float xMax, float yMin, float yMax)
         if (i == numYTicks) display->drawLine(plotAreaX - 5, plotAreaY + plotAreaHeight-1, plotAreaX, plotAreaY + plotAreaHeight-1, EPD_BLACK);
         else display->drawLine(plotAreaX - 5, yPos, plotAreaX, yPos, EPD_BLACK); // Tick mark
         if (i < numYTicks)
-            drawDashedLine(plotAreaX, yPos, plotAreaX + plotAreaWidth, yPos, EPD_BLACK, 2, 5); // grid line
+            drawDashedLine(plotAreaX, yPos, plotAreaX + plotAreaWidth, yPos, EPD_BLACK, 1, 3); // grid line
         float labelVal = yMax - (yMax - yMin) * i / numYTicks;
         char buffer[10];
         dtostrf(labelVal, 4, 1, buffer);
@@ -133,7 +133,9 @@ void ScatterPlot::drawAxes(float xMin, float xMax, float yMin, float yMax)
     for (int i = numXTicks; i >=0; --i)
     {
         time_t tickTime = midnight - (time_t)((float)i * seconds_per_xtick);
-        DataPoint tickpoint = {(float)tickTime, 0.0 };
+        struct tm* thisticktime = localtime(&tickTime);
+        time_t adjustedticktime = mktime(thisticktime);
+        DataPoint tickpoint = {(float)adjustedticktime, 0.0 };
         int xPos, yPos;
         mapPoint(tickpoint, xPos, yPos, xMin, xMax, yMin, yMax);
         if((xPos < plotAreaX) || (xPos > plotAreaX + plotAreaWidth)) continue;
@@ -141,7 +143,7 @@ void ScatterPlot::drawAxes(float xMin, float xMax, float yMin, float yMax)
         if(i == numXTicks) display->drawLine(plotAreaX+plotAreaWidth -1 , plotAreaY + plotAreaHeight, plotAreaX+plotAreaWidth -1, plotAreaY + plotAreaHeight + 5, EPD_BLACK);
         else display->drawLine(xPos, plotAreaY + plotAreaHeight, xPos, plotAreaY + plotAreaHeight + 5, EPD_BLACK);
         if (i < numXTicks)
-            drawDashedLine(xPos, plotAreaY, xPos, plotAreaY + plotAreaHeight, EPD_BLACK, 2, 5);
+            drawDashedLine(xPos, plotAreaY, xPos, plotAreaY + plotAreaHeight, EPD_BLACK, 1, 3);
         float labelVal = xMin + (xMax - xMin) * i / numXTicks;
 
         // Convert timestamp to Month/Day format
