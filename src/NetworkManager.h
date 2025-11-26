@@ -21,7 +21,10 @@ public:
     
     // Connect to WiFi, falling back to provisioning if it fails
     void connectOrProvision(GxEPD2_DISPLAY_CLASS<GxEPD2_DRIVER_CLASS, MAX_HEIGHT(GxEPD2_DRIVER_CLASS)> *display);
-    
+
+    //load time from rtc, and set timezone from NVS
+    bool initializeFromRtc(RTC_PCF8563& rtc);
+
     // Sync time via API or NTP
     bool syncTime(RTC_PCF8563& rtc);
     

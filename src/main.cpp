@@ -202,6 +202,7 @@ void setup()
   {
     // If we are just updating the view (button1 or 2 press), try to load pets from NVS
     // so we have names for the charts without needing WiFi
+    networkManager->initializeFromRtc(rtc);
     size_t len = preferences.getBytesLength(NVS_PETS_KEY);
     if (len > 0)
     {
