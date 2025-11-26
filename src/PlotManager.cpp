@@ -33,8 +33,9 @@ void PlotManager::renderDashboard(const std::vector<Pet> &pets, PetDataMap &allP
                 continue;
 
             float weight_lbs = (float)record.weight_grams / GRAMS_PER_POUND;
-
-            pet_scatterplot[idx].push_back({(float)record.timestamp, weight_lbs});
+            struct tm* thistimestamp = localtime(&record.timestamp);
+            time_t ts = mktime(thistimestamp);
+            pet_scatterplot[idx].push_back({(float)ts, weight_lbs});
             duration_hist[idx].push_back((float)record.duration_seconds / 60.0);
 
             if (lastTimestamp > 0)
@@ -89,7 +90,7 @@ void PlotManager::renderDashboard(const std::vector<Pet> &pets, PetDataMap &allP
         battery_voltage = 4.2;
     }
     char buffer[32];
-    
+
     // Draw Battery
     sprintf(buffer, "Battery: %.2fV", battery_voltage);
     _display->getTextBounds(buffer, x, y, &x1, &y1, &w, &h);

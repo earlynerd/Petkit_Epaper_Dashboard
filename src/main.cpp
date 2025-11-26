@@ -176,7 +176,6 @@ void setup()
 
       if (networkManager->getApi()->fetchAllData(daysToFetch))
       {
-        
         allPets = networkManager->getApi()->getPets();
 
         // Store pets to NVS
@@ -209,7 +208,7 @@ void setup()
       allPets.resize(len / sizeof(Pet));
       preferences.getBytes(NVS_PETS_KEY, allPets.data(), len);
     }
-    status = dataManager.getStatus();
+    //status = dataManager.getStatus();
   }
 
   // 3. Render

@@ -170,11 +170,12 @@ void DataManager::saveStatus(const StatusRecord &status) {
     s.litter_percent = 0;
     s.timestamp = 0;
     s.device_name = "";
-    
+
     if (!SD.exists(_status_filename)) {
         Serial.println("[DataManager] No Status file found.");
         return s;
     }
+    else Serial.println("[DataManager] Status file loaded");
 
     File file = SD.open(_status_filename, FILE_READ);
     if (!file) return s;
@@ -189,6 +190,7 @@ void DataManager::saveStatus(const StatusRecord &status) {
     }
     
     JsonObject root = doc.as<JsonObject>();
+    s.device_name = root["device_name"].as<String>();
     s.box_full = root["box_full"];
     s.device_type = root["device_name"].as<String>();
     s.litter_percent = root["litter_percent"]; 
